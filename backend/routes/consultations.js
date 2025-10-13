@@ -10,14 +10,17 @@ let transporter = null;
 if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
   try {
     transporter = nodemailer.createTransport({
-      host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-      port: process.env.EMAIL_PORT || 587,
-      secure: false,
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-      }
-    });
+  host: process.env.EMAIL_HOST || 'smtp.gmail.com',
+  port: 465, // Puerto SSL
+  secure: true, // true para puerto 465
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS
+  },
+  connectionTimeout: 10000, // 10 segundos
+  greetingTimeout: 10000,
+  socketTimeout: 10000
+});
     console.log('📧 Servicio de email configurado');
   } catch (error) {
     console.log('❌ Error configurando email:', error.message);
