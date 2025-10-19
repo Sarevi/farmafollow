@@ -2,193 +2,118 @@ const express = require('express');
 const router = express.Router();
 const Consultation = require('../models/Consultation');
 const User = require('../models/User');
-const { protect, admin } = require('../middleware/auth');
-const nodemailer = require('nodemailer');
+const auth = require('../middleware/auth');
 
-// Configurar transporter de email de forma segura
-let transporter = null;
-if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
-  try {
-    transporter = nodemailer.createTransport({
-  host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-  port: 465, // Puerto SSL
-  secure: true, // true para puerto 465
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
-  },
-  connectionTimeout: 10000, // 10 segundos
-  greetingTimeout: 10000,
-  socketTimeout: 10000
-});
-    console.log('📧 Servicio de email configurado');
-  } catch (error) {
-    console.log('❌ Error configurando email:', error.message);
-    console.log('⚠️ Email no configurado, las notificaciones por email no funcionarán');
-  }
-} else {
-  console.log('⚠️ Credenciales de email no configuradas');
-}
+// Los emails están desactivados temporalmente
+// Si quieres activarlos en el futuro, descomenta las líneas relacionadas con nodemailer
 
-// @route   GET /api/consultations
-// @desc    Obtener consultas (admin: todas, usuario: propias)
-// @access  Private
-router.get('/', protect, async (req, res) => {
-  try {
-    const filter = req.user.role === 'admin' ? {} : { patient: req.user._id };
-    
-    const consultations = await Consultation.find(filter)
-      .populate('patient', 'name email')
-      .populate('medication', 'name')
-      .sort('-createdAt');
-      
-    res.json(consultations);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-});
-
-// @route   POST /api/consultations
-// @desc    Crear consulta
-// @access  Private
-router.post('/', protect, async (req, res) => {
+// Crear consulta
+router.post('/', auth, async (req, res) => {
   try {
     const { subject, message, contact, urgency } = req.body;
     
-    const consultation = await Consultation.create({
-      patient: req.user._id,
-      medication: req.user.medication,
+    const consultation = new Consultation({
+      patient: req.user.userId,
       subject,
       message,
-      contact: contact || req.user.email,
+      contact,
       urgency: urgency || 'medium'
     });
     
-    // Actualizar contador de consultas del usuario
-    await User.findByIdAndUpdate(req.user._id, {
-      $inc: { consultations: 1 }
-    });
+    await consultation.save();
     
-    // Intentar enviar email de notificación
-    if (transporter && process.env.EMAIL_USER) {
-      try {
-        await transporter.sendMail({
-          from: process.env.EMAIL_USER,
-          to: 'consultasfarmachuo@gmail.com',
-          subject: `FarmaFollow - Nueva consulta: ${subject}`,
-          html: `
-            <h2>Nueva Consulta Farmacéutica</h2>
-            <p><strong>Paciente:</strong> ${req.user.name}</p>
-            <p><strong>Email:</strong> ${contact || req.user.email}</p>
-            <p><strong>Asunto:</strong> ${subject}</p>
-            <p><strong>Urgencia:</strong> ${urgency || 'medium'}</p>
-            <p><strong>Mensaje:</strong></p>
-            <p>${message}</p>
-          `
-        });
-        console.log('✅ Email de notificación enviado');
-      } catch (emailError) {
-        console.error('❌ Error enviando email:', emailError.message);
-        // No fallar la operación si el email no se envía
-      }
-    }
+    // Email desactivado temporalmente - Las consultas se guardan en la BD
+    // y puedes verlas en el panel de administración
+    console.log('📝 Consulta guardada (email desactivado)');
     
     res.status(201).json(consultation);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error('Error creando consulta:', error);
+    res.status(400).json({ error: error.message });
   }
 });
 
-// @route   PUT /api/consultations/:id/respond
-// @desc    Responder consulta (admin)
-// @access  Private/Admin
-router.put('/:id/respond', protect, admin, async (req, res) => {
+// Obtener consultas del usuario
+router.get('/', auth, async (req, res) => {
   try {
-    const { response } = req.body;
+    const consultations = await Consultation.find({ patient: req.user.userId })
+      .sort('-createdAt');
+    res.json(consultations);
+  } catch (error) {
+    console.error('Error obteniendo consultas:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Obtener todas las consultas (admin)
+router.get('/all', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId);
+    if (user.role !== 'admin') {
+      return res.status(403).json({ error: 'Acceso denegado' });
+    }
     
+    const consultations = await Consultation.find()
+      .populate('patient', 'name email')
+      .sort('-createdAt');
+    res.json(consultations);
+  } catch (error) {
+    console.error('Error obteniendo consultas:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Responder consulta (admin)
+router.put('/:id/respond', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId);
+    if (user.role !== 'admin') {
+      return res.status(403).json({ error: 'Acceso denegado' });
+    }
+    
+    const { response } = req.body;
     const consultation = await Consultation.findByIdAndUpdate(
       req.params.id,
       {
         response,
         status: 'resolved',
-        respondedBy: req.user._id,
-        respondedAt: Date.now()
+        respondedAt: new Date()
       },
       { new: true }
     ).populate('patient', 'name email');
     
     if (!consultation) {
-      return res.status(404).json({ message: 'Consulta no encontrada' });
+      return res.status(404).json({ error: 'Consulta no encontrada' });
     }
     
-    // Intentar enviar email al paciente con la respuesta
-    if (transporter && process.env.EMAIL_USER && consultation.patient.email) {
-      try {
-        await transporter.sendMail({
-          from: process.env.EMAIL_USER,
-          to: consultation.patient.email,
-          subject: 'FarmaFollow - Respuesta a tu consulta',
-          html: `
-            <h2>Respuesta del Farmacéutico</h2>
-            <p><strong>Tu consulta:</strong> ${consultation.message}</p>
-            <hr>
-            <p><strong>Respuesta:</strong></p>
-            <p>${response}</p>
-          `
-        });
-        console.log('✅ Respuesta enviada por email al paciente');
-      } catch (emailError) {
-        console.error('❌ Error enviando respuesta por email:', emailError.message);
-        // No fallar la operación si el email no se envía
-      }
-    }
+    // Email desactivado temporalmente
+    console.log('📝 Consulta respondida (email desactivado)');
     
     res.json(consultation);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error('Error respondiendo consulta:', error);
+    res.status(400).json({ error: error.message });
   }
 });
 
-// @route   GET /api/consultations/:id
-// @desc    Obtener una consulta específica
-// @access  Private
-router.get('/:id', protect, async (req, res) => {
+// Eliminar consulta (admin)
+router.delete('/:id', auth, async (req, res) => {
   try {
-    const consultation = await Consultation.findById(req.params.id)
-      .populate('patient', 'name email')
-      .populate('medication', 'name');
+    const user = await User.findById(req.user.userId);
+    if (user.role !== 'admin') {
+      return res.status(403).json({ error: 'Acceso denegado' });
+    }
+    
+    const consultation = await Consultation.findByIdAndDelete(req.params.id);
     
     if (!consultation) {
-      return res.status(404).json({ message: 'Consulta no encontrada' });
+      return res.status(404).json({ error: 'Consulta no encontrada' });
     }
     
-    // Verificar que el usuario tenga acceso
-    if (req.user.role !== 'admin' && consultation.patient._id.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ message: 'No tienes acceso a esta consulta' });
-    }
-    
-    res.json(consultation);
+    res.json({ message: 'Consulta eliminada correctamente' });
   } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-});
-
-// @route   DELETE /api/consultations/:id
-// @desc    Eliminar consulta (admin)
-// @access  Private/Admin
-router.delete('/:id', protect, admin, async (req, res) => {
-  try {
-    const consultation = await Consultation.findById(req.params.id);
-    
-    if (!consultation) {
-      return res.status(404).json({ message: 'Consulta no encontrada' });
-    }
-    
-    await consultation.deleteOne();
-    
-    res.json({ message: 'Consulta eliminada' });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error('Error eliminando consulta:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 

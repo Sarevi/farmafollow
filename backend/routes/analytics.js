@@ -3,194 +3,375 @@ const router = express.Router();
 const User = require('../models/User');
 const Medication = require('../models/Medication');
 const Consultation = require('../models/Consultation');
-const Reminder = require('../models/Reminder');
-const { protect, admin } = require('../middleware/auth');
+const Questionnaire = require('../models/Questionnaire');
+const QuestionnaireResponse = require('../models/QuestionnaireResponse');
+const auth = require('../middleware/auth');
 
-// @route   GET /api/analytics/dashboard
-// @desc    Obtener métricas del dashboard
-// @access  Private/Admin
-router.get('/dashboard', protect, admin, async (req, res) => {
+// Obtener analytics generales - MEJORADO
+router.get('/', auth, async (req, res) => {
   try {
-    const totalPatients = await User.countDocuments({ role: 'patient' });
-    const totalMedications = await Medication.countDocuments();
+    // Verificar que es admin
+    const user = await User.findById(req.user.userId);
+    if (user.role !== 'admin') {
+      return res.status(403).json({ error: 'Acceso denegado' });
+    }
+
+    // 1. MÉTRICAS GENERALES
+    const totalPatients = await User.countDocuments({ role: 'patient', isActive: true });
+    const totalMedications = await Medication.countDocuments({ isActive: true });
     
-    // Calcular adherencia global
-    const patients = await User.find({ role: 'patient' });
-    const totalAdherence = patients.reduce((sum, patient) => sum + patient.adherence, 0);
-    const globalAdherence = totalPatients > 0 ? Math.round(totalAdherence / totalPatients) : 0;
-    
-    // Pacientes en riesgo (adherencia < 60%)
-    const riskPatients = await User.countDocuments({ 
-      role: 'patient', 
-      adherence: { $lt: 60 } 
+    // Adherencia promedio global
+    const patients = await User.find({ role: 'patient', isActive: true });
+    let totalAdherence = 0;
+    patients.forEach(patient => {
+      totalAdherence += patient.calculateAdherence();
     });
-    
-    // Consultas pendientes
-    const pendingConsultations = await Consultation.countDocuments({ 
-      status: 'pending' 
+    const averageAdherence = patients.length > 0 
+      ? Math.round(totalAdherence / patients.length) 
+      : 100;
+
+    // Consultas
+    const pendingConsultations = await Consultation.countDocuments({ status: 'pending' });
+    const totalConsultations = await Consultation.countDocuments();
+    const resolvedConsultations = await Consultation.countDocuments({ status: 'resolved' });
+
+    // Cuestionarios
+    const pendingQuestionnaires = await QuestionnaireResponse.countDocuments({ 
+      status: { $in: ['pending', 'in-progress'] }
     });
-    
-    // Adherencia por los últimos 7 días
-    const weekAdherence = await getWeeklyAdherence();
-    
-    // Pacientes críticos
-    const criticalPatients = await User.find({
+    const completedQuestionnaires = await QuestionnaireResponse.countDocuments({ 
+      status: 'completed' 
+    });
+
+    // Eventos adversos
+    const patientsWithEvents = await User.find({
       role: 'patient',
-      $or: [
-        { adherence: { $lt: 60 } },
-        { lastActivity: { $lt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } }
-      ]
-    }).populate('medication', 'name');
+      'adverseEvents.0': { $exists: true }
+    });
     
+    let unresolvedAdverseEvents = 0;
+    let totalAdverseEvents = 0;
+    const recentAdverseEvents = []; // Últimos 7 días
+    
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    
+    patientsWithEvents.forEach(patient => {
+      patient.adverseEvents.forEach(event => {
+        totalAdverseEvents++;
+        if (!event.resolved) {
+          unresolvedAdverseEvents++;
+        }
+        if (event.date >= sevenDaysAgo) {
+          recentAdverseEvents.push({
+            patient: patient.name,
+            event: event.event,
+            severity: event.severity,
+            date: event.date
+          });
+        }
+      });
+    });
+
+    // 2. ALERTAS
+    const alerts = [];
+
+    // Pacientes con baja adherencia (<70%)
+    const lowAdherencePatients = patients.filter(p => p.calculateAdherence() < 70);
+    if (lowAdherencePatients.length > 0) {
+      alerts.push({
+        type: 'danger',
+        message: `${lowAdherencePatients.length} paciente(s) con adherencia menor al 70%`,
+        count: lowAdherencePatients.length,
+        patients: lowAdherencePatients.map(p => ({
+          id: p._id,
+          name: p.name,
+          adherence: p.calculateAdherence()
+        }))
+      });
+    }
+
+    // Eventos adversos sin resolver
+    if (unresolvedAdverseEvents > 0) {
+      alerts.push({
+        type: 'warning',
+        message: `${unresolvedAdverseEvents} evento(s) adverso(s) sin resolver`,
+        count: unresolvedAdverseEvents
+      });
+    }
+
+    // Cuestionarios sin responder más de 7 días
+    const oldPendingResponses = await QuestionnaireResponse.find({
+      status: 'pending',
+      createdAt: { $lt: sevenDaysAgo }
+    }).populate('patient', 'name').populate('questionnaire', 'title');
+    
+    if (oldPendingResponses.length > 0) {
+      alerts.push({
+        type: 'warning',
+        message: `${oldPendingResponses.length} cuestionario(s) sin responder hace más de 7 días`,
+        count: oldPendingResponses.length,
+        questionnaires: oldPendingResponses.map(r => ({
+          patient: r.patient?.name,
+          questionnaire: r.questionnaire?.title,
+          daysPending: Math.floor((Date.now() - r.createdAt) / (1000 * 60 * 60 * 24))
+        }))
+      });
+    }
+
+    // Consultas urgentes pendientes
+    const urgentConsultations = await Consultation.countDocuments({
+      status: 'pending',
+      urgency: 'high'
+    });
+    
+    if (urgentConsultations > 0) {
+      alerts.push({
+        type: 'danger',
+        message: `${urgentConsultations} consulta(s) urgente(s) pendiente(s)`,
+        count: urgentConsultations
+      });
+    }
+
+    // 3. RESPUESTA
     res.json({
-      metrics: {
+      generalMetrics: {
         totalPatients,
         totalMedications,
-        globalAdherence,
-        riskPatients,
-        pendingConsultations
+        averageAdherence,
+        pendingConsultations,
+        totalConsultations,
+        resolvedConsultations,
+        pendingQuestionnaires,
+        completedQuestionnaires,
+        totalAdverseEvents,
+        unresolvedAdverseEvents,
+        recentAdverseEvents: recentAdverseEvents.length
       },
-      weekAdherence,
-      criticalPatients
+      alerts,
+      recentActivity: {
+        adverseEvents: recentAdverseEvents.slice(0, 5) // Últimos 5
+      }
     });
+
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error('Error obteniendo analytics:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
-// @route   GET /api/analytics/medications
-// @desc    Obtener análisis por medicamento
-// @access  Private/Admin
-router.get('/medications', protect, admin, async (req, res) => {
+// Obtener analytics por medicamento - NUEVO
+router.get('/by-medication', auth, async (req, res) => {
   try {
-    const medications = await Medication.find()
-      .populate('patients', 'name adherence lastActivity');
+    const user = await User.findById(req.user.userId);
+    if (user.role !== 'admin') {
+      return res.status(403).json({ error: 'Acceso denegado' });
+    }
+
+    const medications = await Medication.find({ isActive: true });
     
-    const analysis = medications.map(med => {
-      const patients = med.patients || [];
-      const totalAdherence = patients.reduce((sum, p) => sum + (p.adherence || 0), 0);
-      const avgAdherence = patients.length > 0 ? Math.round(totalAdherence / patients.length) : 0;
-      const riskPatients = patients.filter(p => p.adherence < 60).length;
+    const medicationStats = await Promise.all(medications.map(async (med) => {
+      const avgAdherence = await med.calculateAverageAdherence();
+      const adverseEvents = await med.countAdverseEvents();
+      const activePatients = await med.getActivePatients();
       
       return {
         id: med._id,
         name: med.name,
-        totalPatients: patients.length,
-        avgAdherence,
-        riskPatients,
-        sideEffectsReports: med.sideEffectsReports
+        activeIngredient: med.activeIngredient,
+        patientCount: activePatients.length,
+        averageAdherence: avgAdherence,
+        adverseEvents: adverseEvents.total,
+        unresolvedAdverseEvents: adverseEvents.unresolved,
+        indications: med.indications
       };
-    });
-    
-    res.json(analysis);
+    }));
+
+    res.json(medicationStats);
+
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error('Error obteniendo analytics por medicamento:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
-// @route   GET /api/analytics/alerts
-// @desc    Obtener alertas del sistema
-// @access  Private/Admin
-router.get('/alerts', protect, admin, async (req, res) => {
+// Obtener analytics por enfermedad - NUEVO
+router.get('/by-disease', auth, async (req, res) => {
   try {
-    const alerts = [];
-    const now = new Date();
-    
-    // Pacientes con baja adherencia
-    const lowAdherencePatients = await User.find({
-      role: 'patient',
-      adherence: { $lt: 60 }
+    const user = await User.findById(req.user.userId);
+    if (user.role !== 'admin') {
+      return res.status(403).json({ error: 'Acceso denegado' });
+    }
+
+    // Obtener todas las enfermedades únicas
+    const patients = await User.find({ role: 'patient', isActive: true });
+    const diseaseMap = new Map();
+
+    patients.forEach(patient => {
+      if (patient.diseases && patient.diseases.length > 0) {
+        patient.diseases.forEach(disease => {
+          if (!diseaseMap.has(disease)) {
+            diseaseMap.set(disease, []);
+          }
+          diseaseMap.get(disease).push(patient);
+        });
+      }
     });
+
+    // Calcular estadísticas por enfermedad
+    const diseaseStats = [];
     
-    lowAdherencePatients.forEach(patient => {
-      alerts.push({
-        type: 'critical',
-        title: `Adherencia crítica: ${patient.name}`,
-        description: `Adherencia actual: ${patient.adherence}%`,
-        patient: patient.name,
-        timestamp: new Date()
+    for (const [disease, patientsWithDisease] of diseaseMap.entries()) {
+      let totalAdherence = 0;
+      let totalAdverseEvents = 0;
+      let unresolvedAdverseEvents = 0;
+
+      patientsWithDisease.forEach(patient => {
+        totalAdherence += patient.calculateAdherence();
+        
+        if (patient.adverseEvents) {
+          const events = patient.adverseEvents.filter(e => !e.resolved);
+          unresolvedAdverseEvents += events.length;
+          totalAdverseEvents += patient.adverseEvents.length;
+        }
       });
-    });
-    
-    // Pacientes inactivos
-    const inactiveDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const inactivePatients = await User.find({
-      role: 'patient',
-      lastActivity: { $lt: inactiveDate }
-    });
-    
-    inactivePatients.forEach(patient => {
-      const daysInactive = Math.floor((now - patient.lastActivity) / (1000 * 60 * 60 * 24));
-      alerts.push({
-        type: 'warning',
-        title: `Paciente inactivo: ${patient.name}`,
-        description: `${daysInactive} días sin actividad`,
-        patient: patient.name,
-        timestamp: new Date()
+
+      const avgAdherence = patientsWithDisease.length > 0
+        ? Math.round(totalAdherence / patientsWithDisease.length)
+        : 100;
+
+      diseaseStats.push({
+        disease,
+        patientCount: patientsWithDisease.length,
+        averageAdherence: avgAdherence,
+        totalAdverseEvents,
+        unresolvedAdverseEvents
       });
-    });
-    
-    // Consultas urgentes sin responder
-    const urgentConsultations = await Consultation.find({
-      status: 'pending',
-      urgency: 'high',
-      createdAt: { $lt: new Date(now.getTime() - 4 * 60 * 60 * 1000) }
-    }).populate('patient', 'name');
-    
-    urgentConsultations.forEach(consultation => {
-      const hoursOld = Math.floor((now - consultation.createdAt) / (1000 * 60 * 60));
-      alerts.push({
-        type: 'critical',
-        title: 'Consulta urgente sin responder',
-        description: `${hoursOld}h esperando respuesta`,
-        patient: consultation.patient.name,
-        timestamp: consultation.createdAt
-      });
-    });
-    
-    res.json(alerts);
+    }
+
+    // Ordenar por número de pacientes
+    diseaseStats.sort((a, b) => b.patientCount - a.patientCount);
+
+    res.json(diseaseStats);
+
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error('Error obteniendo analytics por enfermedad:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
-// Función auxiliar para obtener adherencia semanal
-async function getWeeklyAdherence() {
-  const weekData = [];
-  const now = new Date();
-  
-  for (let i = 6; i >= 0; i--) {
-    const date = new Date(now);
-    date.setDate(date.getDate() - i);
-    date.setHours(0, 0, 0, 0);
-    
-    const nextDate = new Date(date);
-    nextDate.setDate(nextDate.getDate() + 1);
-    
-    // Contar dosis del día
-    const users = await User.find({ role: 'patient' });
-    let totalDoses = 0;
-    let takenDoses = 0;
-    
-    for (const user of users) {
-      const dayDoses = user.doseHistory.filter(dose => {
-        const doseDate = new Date(dose.scheduledTime);
-        return doseDate >= date && doseDate < nextDate;
-      });
-      
-      totalDoses += dayDoses.length;
-      takenDoses += dayDoses.filter(d => d.status === 'taken').length;
+// Obtener pacientes con baja adherencia - NUEVO
+router.get('/low-adherence', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId);
+    if (user.role !== 'admin') {
+      return res.status(403).json({ error: 'Acceso denegado' });
     }
-    
-    const adherence = totalDoses > 0 ? Math.round((takenDoses / totalDoses) * 100) : 0;
-    
-    weekData.push({
-      date: date.toLocaleDateString('es-ES', { weekday: 'short' }),
-      adherence: adherence || Math.floor(Math.random() * 20) + 70 // Datos simulados si no hay reales
-    });
+
+    const threshold = parseInt(req.query.threshold) || 70;
+    const patients = await User.find({ role: 'patient', isActive: true })
+      .populate('doseHistory.medication', 'name');
+
+    const lowAdherencePatients = patients
+      .map(patient => ({
+        id: patient._id,
+        name: patient.name,
+        email: patient.email,
+        adherence: patient.calculateAdherence(),
+        diseases: patient.diseases,
+        lastDose: patient.getLastDose(),
+        phone: patient.phone
+      }))
+      .filter(p => p.adherence < threshold)
+      .sort((a, b) => a.adherence - b.adherence);
+
+    res.json(lowAdherencePatients);
+
+  } catch (error) {
+    console.error('Error obteniendo pacientes con baja adherencia:', error);
+    res.status(500).json({ error: error.message });
   }
-  
-  return weekData;
-}
+});
+
+// Exportar datos para reportes - NUEVO
+router.get('/export', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId);
+    if (user.role !== 'admin') {
+      return res.status(403).json({ error: 'Acceso denegado' });
+    }
+
+    const { type } = req.query; // 'patients', 'medications', 'consultations', 'questionnaires'
+
+    let data = [];
+
+    switch (type) {
+      case 'patients':
+        const patients = await User.find({ role: 'patient', isActive: true });
+        data = patients.map(p => ({
+          nombre: p.name,
+          email: p.email,
+          telefono: p.phone || '',
+          enfermedades: p.diseases?.join(', ') || '',
+          adherencia: p.calculateAdherence(),
+          edad: p.getAge() || '',
+          fechaInicio: p.startDate ? p.startDate.toLocaleDateString() : '',
+          eventosAdversos: p.adverseEvents?.length || 0
+        }));
+        break;
+
+      case 'medications':
+        const medications = await Medication.find({ isActive: true });
+        data = await Promise.all(medications.map(async (m) => ({
+          nombre: m.name,
+          principioActivo: m.activeIngredient || '',
+          indicaciones: m.indications?.join(', ') || '',
+          pacientes: m.patients?.length || 0,
+          adherenciaPromedio: await m.calculateAverageAdherence(),
+          eventosAdversos: (await m.countAdverseEvents()).total
+        })));
+        break;
+
+      case 'consultations':
+        const consultations = await Consultation.find()
+          .populate('patient', 'name email')
+          .sort('-createdAt');
+        data = consultations.map(c => ({
+          paciente: c.patient?.name || '',
+          email: c.patient?.email || '',
+          asunto: c.subject,
+          mensaje: c.message,
+          urgencia: c.urgency,
+          estado: c.status,
+          fecha: c.createdAt.toLocaleDateString(),
+          respuesta: c.response || ''
+        }));
+        break;
+
+      case 'questionnaires':
+        const responses = await QuestionnaireResponse.find({ status: 'completed' })
+          .populate('patient', 'name email')
+          .populate('questionnaire', 'title type');
+        data = responses.map(r => ({
+          paciente: r.patient?.name || '',
+          cuestionario: r.questionnaire?.title || '',
+          tipo: r.questionnaire?.type || '',
+          completado: r.completedAt?.toLocaleDateString() || '',
+          tiempoCompletado: r.timeToComplete ? `${Math.round(r.timeToComplete / 60)} min` : '',
+          revisado: r.reviewed ? 'Sí' : 'No'
+        }));
+        break;
+
+      default:
+        return res.status(400).json({ error: 'Tipo de exportación no válido' });
+    }
+
+    res.json(data);
+
+  } catch (error) {
+    console.error('Error exportando datos:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
 module.exports = router;
