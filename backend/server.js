@@ -24,7 +24,12 @@ mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log('✅ MongoDB conectado'))
   .catch((err) => console.error('❌ Error conectando MongoDB:', err));
 
-// Rutas de API
+// Servir archivos estáticos del frontend en producción (PRIMERO)
+if (process.env.NODE_ENV === 'production') {
+  app.use(express.static(path.join(__dirname, '../frontend')));
+}
+
+// Rutas de API (DESPUÉS de static pero ANTES del catch-all)
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/users', require('./routes/users'));
 app.use('/api/medications', require('./routes/medications'));
@@ -36,15 +41,6 @@ app.use('/api/analytics', require('./routes/analytics'));
 // Descomenta cuando crees el archivo routes/questionnaires.js
 // app.use('/api/questionnaires', require('./routes/questionnaires'));
 
-// Servir archivos estáticos del frontend en producción
-if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(path.join(__dirname, '../frontend')));
-  
-  app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, '../frontend/index.html'));
-  });
-}
-
 // Ruta de prueba
 app.get('/api/health', (req, res) => {
   res.json({ 
@@ -55,9 +51,25 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Manejo de errores 404
-app.use((req, res) => {
-  res.status(404).json({ error: 'Ruta no encontrada' });
+// Catch-all route SOLO para rutas que NO son API (DEBE IR AL FINAL)
+if (process.env.NODE_ENV === 'production') {
+  app.get('*', (req, res) => {
+    // Solo servir index.html si NO es una ruta de API
+    if (!req.path.startsWith('/api')) {
+      res.sendFile(path.join(__dirname, '../frontend/index.html'));
+    } else {
+      res.status(404).json({ error: 'API route not found' });
+    }
+  });
+}
+
+// Manejo de errores 404 (desarrollo)
+app.use((req, res, next) => {
+  if (process.env.NODE_ENV !== 'production') {
+    res.status(404).json({ error: 'Ruta no encontrada' });
+  } else {
+    next();
+  }
 });
 
 // Manejo de errores generales
