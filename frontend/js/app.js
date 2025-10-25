@@ -360,31 +360,65 @@ class FarmaFollowApp {
       this.reminders = reminders;
 
       const adherence = this.user.adherenceRate || 100;
+      const today = new Date();
+      const dayNames = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+      const monthNames = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+      const dateStr = `${dayNames[today.getDay()]}, ${today.getDate()} de ${monthNames[today.getMonth()]} de ${today.getFullYear()}`;
+
+      const activeReminders = reminders.filter(r => r.isActive);
+      const nextReminder = activeReminders.length > 0 ? activeReminders[0] : null;
 
       container.innerHTML = `
-        <div class="dashboard">
-          <div class="dashboard-header">
+        <div class="dashboard-new">
+          <div class="dashboard-header-new">
             <h1>Hola, ${this.user.name} 👋</h1>
-            <button class="btn btn-secondary" onclick="app.logout()">
-              Cerrar Sesión
+            <button class="btn-logout" onclick="app.logout()">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/>
+              </svg>
             </button>
           </div>
 
-          <div class="adherence-card">
-            <div class="adherence-content">
-              <div class="adherence-chart">
-                <div class="circular-progress" style="--progress: ${adherence}%">
-                  <span class="adherence-percentage">${adherence}%</span>
+          <div class="today-card">
+            <div class="today-header">
+              <h2>Hoy</h2>
+              <span class="today-date">${dateStr}</span>
+            </div>
+            
+            <div class="today-content">
+              <div class="adherence-circle-new">
+                <svg viewBox="0 0 200 200">
+                  <circle cx="100" cy="100" r="85" fill="none" stroke="#E5E7EB" stroke-width="20"/>
+                  <circle cx="100" cy="100" r="85" fill="none" stroke="#14B8A6" stroke-width="20"
+                    stroke-dasharray="${534 * adherence / 100} 534" 
+                    stroke-linecap="round"
+                    transform="rotate(-90 100 100)"/>
+                </svg>
+                <div class="adherence-text">
+                  <span class="adherence-label">adherencia</span>
+                  <span class="adherence-value">${adherence}%</span>
                 </div>
               </div>
-              <div class="adherence-info">
-                <h2>Tu Adherencia</h2>
-                <p>${adherence >= 90 ? '¡Excelente!' : adherence >= 70 ? 'Muy bien' : 'Puedes mejorar'}</p>
+
+              <div class="next-dose-info">
+                <h3>Próxima dosis</h3>
+                ${nextReminder ? `
+                  <div class="dose-time">${nextReminder.time}</div>
+                  <div class="dose-med">${nextReminder.medication?.name || ''}</div>
+                ` : `
+                  <div class="no-reminders">
+                    <div class="dots">- - • - -</div>
+                    <span>Sin recordatorios</span>
+                  </div>
+                `}
               </div>
             </div>
           </div>
 
-          <div id="medicationsContainer" class="medications-container"></div>
+          <div class="medications-section-new">
+            <h2>Tu Medicamento</h2>
+            <div id="medicationsContainer"></div>
+          </div>
         </div>
       `;
 
@@ -400,25 +434,23 @@ class FarmaFollowApp {
       } else {
         medications.forEach(med => {
           const card = document.createElement('div');
-          card.className = 'medication-card';
+          card.className = 'medication-card-new';
+          card.onclick = () => this.showMedicationDetail(med._id);
           card.innerHTML = `
-            <div class="medication-header">
-              <h3>${med.name}</h3>
+            <div class="med-icon">
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M4.22 11.29l7.07-7.07a2 2 0 012.83 0l3.66 3.66a2 2 0 010 2.83l-7.07 7.07a2 2 0 01-2.83 0L4.22 14.12a2 2 0 010-2.83z"/>
+                <path d="M8.5 10.5l5 5"/>
+              </svg>
             </div>
-            <p class="medication-description">${med.description}</p>
-            <div class="medication-actions">
-              <button class="btn btn-primary" onclick="app.showMedicationDetail('${med._id}')">
-                <i class="icon">🎥</i> Ver Detalles
-              </button>
-              <button class="btn btn-secondary" onclick="app.showScreen('reminders')">
-                <i class="icon">⏰</i> Recordatorios
-              </button>
-              <button class="btn btn-secondary" onclick="app.showScreen('my-consultations')">
-                <i class="icon">💬</i> Mis Consultas
-              </button>
-              <button class="btn btn-secondary" onclick="app.showScreen('consult')">
-                <i class="icon">❓</i> Consultar
-              </button>
+            <div class="med-info">
+              <h3>${med.name}</h3>
+              <p>${med.description}</p>
+            </div>
+            <div class="med-arrow">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M9 18l6-6-6-6"/>
+              </svg>
             </div>
           `;
           medicationsContainer.appendChild(card);
@@ -444,56 +476,119 @@ class FarmaFollowApp {
     }
 
     container.innerHTML = `
-      <div class="medication-detail">
-        <div class="detail-header">
-          <button class="btn btn-secondary" onclick="app.showScreen('dashboard')">
-            ← Volver
+      <div class="medication-detail-new">
+        <div class="detail-header-new">
+          <button class="btn-back" onclick="app.showScreen('dashboard')">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M19 12H5M12 19l-7-7 7-7"/>
+            </svg>
           </button>
-          <h1>${med.name}</h1>
+          <h1>Medicamento</h1>
         </div>
 
-        <div class="detail-content">
-          <section class="detail-section">
-            <h2>📝 Descripción</h2>
-            <p>${med.description}</p>
-          </section>
-
-          ${med.videoUrl ? `
-            <section class="detail-section">
-              <h2>🎥 Video de Administración</h2>
-              <div class="video-container">
-                <iframe 
-                  src="${med.videoUrl}" 
-                  frameborder="0" 
-                  allowfullscreen>
-                </iframe>
+        <div class="med-detail-body">
+          <h2 class="med-name">${med.name}</h2>
+          
+          <div class="detail-cards-grid">
+            <div class="detail-card" onclick="app.showMedicationVideo()">
+              <div class="detail-card-icon video">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M4 4h12v12H4z"/>
+                  <path d="M20 8l-4 4 4 4V8z"/>
+                </svg>
               </div>
-            </section>
-          ` : ''}
+              <h3>Video de<br>Administración</h3>
+            </div>
 
-          ${med.faqs && med.faqs.length > 0 ? `
-            <section class="detail-section">
-              <h2>❓ Preguntas Frecuentes</h2>
-              <div class="faqs">
-                ${med.faqs.map(faq => `
-                  <div class="faq-item">
-                    <h3>${faq.question}</h3>
-                    <p>${faq.answer}</p>
-                  </div>
-                `).join('')}
+            <div class="detail-card" onclick="app.showMedicationFAQs()">
+              <div class="detail-card-icon faq">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="currentColor">
+                  <circle cx="12" cy="12" r="10"/>
+                  <path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3" stroke="white" stroke-width="2" fill="none"/>
+                  <circle cx="12" cy="17" r="1" fill="white"/>
+                </svg>
               </div>
-            </section>
-          ` : ''}
+              <h3>FAQ y Consejos</h3>
+            </div>
 
-          <section class="detail-section">
-            <h2>💬 ¿Tienes dudas?</h2>
-            <button class="btn btn-primary" onclick="app.showScreen('consult')">
-              Consultar al Farmacéutico
-            </button>
-          </section>
+            <div class="detail-card" onclick="app.showScreen('reminders')">
+              <div class="detail-card-icon reminder">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="currentColor">
+                  <circle cx="12" cy="13" r="7"/>
+                  <path d="M12 6V2M6.3 6.3L4 4M18.7 6.3L21 4M12 9v4l3 2" stroke="white" stroke-width="2" fill="none"/>
+                </svg>
+              </div>
+              <h3>Programar<br>Recordatorio</h3>
+            </div>
+
+            <div class="detail-card" onclick="app.showScreen('consult')">
+              <div class="detail-card-icon consult">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
+                </svg>
+              </div>
+              <h3>Consulta<br>Farmacéutica</h3>
+            </div>
+          </div>
+
+          <button class="btn-primary-new" onclick="app.showScreen('my-consultations')" 
+            style="margin-top: 2rem;">
+            💬 Ver Mis Consultas
+          </button>
         </div>
       </div>
     `;
+  }
+
+  showMedicationVideo() {
+    const med = this.currentMedication;
+    if (!med || !med.videoUrl) {
+      this.showMessage('Este medicamento no tiene video disponible', 'info');
+      return;
+    }
+
+    const modal = document.createElement('div');
+    modal.className = 'modal active';
+    modal.innerHTML = `
+      <div class="modal-content modal-large">
+        <div class="modal-header">
+          <h2>Video de Administración</h2>
+          <button class="close-btn" onclick="this.closest('.modal').remove()">×</button>
+        </div>
+        <div class="video-container">
+          <iframe src="${med.videoUrl}" frameborder="0" allowfullscreen></iframe>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+  }
+
+  showMedicationFAQs() {
+    const med = this.currentMedication;
+    if (!med || !med.faqs || med.faqs.length === 0) {
+      this.showMessage('Este medicamento no tiene FAQs disponibles', 'info');
+      return;
+    }
+
+    const modal = document.createElement('div');
+    modal.className = 'modal active';
+    modal.innerHTML = `
+      <div class="modal-content modal-large">
+        <div class="modal-header">
+          <h2>FAQ y Consejos</h2>
+          <button class="close-btn" onclick="this.closest('.modal').remove()">×</button>
+        </div>
+        <div class="faqs-list">
+          ${med.faqs.map(faq => `
+            <div class="faq-item">
+              <h3>❓ ${faq.question}</h3>
+              <p>${faq.answer}</p>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
   }
 
   renderReminders(container) {
