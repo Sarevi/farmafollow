@@ -14,6 +14,7 @@ class FarmaFollowApp {
       adherence: '',
       search: ''
     };
+    this.reminderCheckInterval = null;
   }
 
   async init() {
@@ -27,6 +28,7 @@ class FarmaFollowApp {
           this.showScreen('admin-dashboard');
         } else {
           this.showScreen('dashboard');
+          this.startReminderChecker();
         }
       } catch (error) {
         logger.error('Error verificando autenticación:', error);
@@ -46,11 +48,165 @@ class FarmaFollowApp {
     });
   }
 
+  // ===== SISTEMA DE RECORDATORIOS =====
+  
+  startReminderChecker() {
+    this.reminderCheckInterval = setInterval(() => {
+      this.checkReminders();
+    }, 30000);
+    this.checkReminders();
+  }
+
+  stopReminderChecker() {
+    if (this.reminderCheckInterval) {
+      clearInterval(this.reminderCheckInterval);
+      this.reminderCheckInterval = null;
+    }
+  }
+
+  async checkReminders() {
+    try {
+      const reminders = await api.getReminders();
+      const now = new Date();
+      const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+      const currentDay = now.getDay();
+
+      reminders.forEach(reminder => {
+        if (!reminder.isActive) return;
+        if (reminder.time !== currentTime) return;
+
+        let shouldNotify = false;
+        
+        if (reminder.frequency === 'daily') {
+          shouldNotify = true;
+        } else if (reminder.frequency === 'weekly' && reminder.daysOfWeek) {
+          shouldNotify = reminder.daysOfWeek.includes(currentDay);
+        }
+
+        if (shouldNotify) {
+          const lastNotified = localStorage.getItem(`reminder_${reminder._id}_last`);
+          if (lastNotified) {
+            const lastTime = new Date(lastNotified);
+            const diffMinutes = (now - lastTime) / 1000 / 60;
+            if (diffMinutes < 60) return;
+          }
+
+          localStorage.setItem(`reminder_${reminder._id}_last`, now.toISOString());
+          this.showReminderNotification(reminder);
+        }
+      });
+    } catch (error) {
+      logger.error('Error verificando recordatorios:', error);
+    }
+  }
+
+  async showReminderNotification(reminder) {
+    const title = '💊 Hora de tomar tu medicación';
+    const body = `${reminder.medication?.name || 'Medicamento'} - ${reminder.time}`;
+
+    if (Notification.permission === 'granted') {
+      const notification = new Notification(title, {
+        body: body,
+        icon: '/icon-192.png',
+        badge: '/icon-192.png',
+        tag: reminder._id,
+        requireInteraction: true
+      });
+
+      notification.onclick = () => {
+        window.focus();
+        this.showReminderModal(reminder);
+        notification.close();
+      };
+    }
+
+    this.showReminderModal(reminder);
+  }
+
+  showReminderModal(reminder) {
+    this.activeReminder = reminder;
+    
+    const existingModal = document.querySelector('.reminder-modal');
+    if (existingModal) existingModal.remove();
+    
+    const modal = document.createElement('div');
+    modal.className = 'modal reminder-modal active';
+    modal.innerHTML = `
+      <div class="modal-content">
+        <h2>💊 Hora de tu Medicación</h2>
+        <div class="reminder-modal-body">
+          <p class="medication-name">${reminder.medication?.name || 'Medicamento'}</p>
+          <p class="reminder-time">⏰ ${reminder.time}</p>
+          ${reminder.notes ? `<p class="reminder-notes">${reminder.notes}</p>` : ''}
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-primary btn-lg" onclick="app.confirmDose(true)">
+            ✓ Tomado
+          </button>
+          <button class="btn btn-secondary" onclick="app.postponeDose()">
+            ⏰ Posponer 15 min
+          </button>
+          <button class="btn btn-outline" onclick="app.dismissReminder()">
+            ✗ Omitir
+          </button>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(modal);
+  }
+
+  async confirmDose(taken) {
+    if (!this.activeReminder) return;
+
+    const modal = document.querySelector('.reminder-modal');
+    if (modal) modal.remove();
+
+    try {
+      await api.recordDose(this.activeReminder._id, taken);
+      this.showMessage('✅ Dosis registrada correctamente', 'success');
+      
+      if (this.currentScreen === 'reminders') {
+        this.renderReminderCalendar();
+      }
+    } catch (error) {
+      logger.error('Error registrando dosis:', error);
+      this.showMessage('Error registrando dosis', 'error');
+    }
+
+    this.activeReminder = null;
+  }
+
+  postponeDose() {
+    if (!this.activeReminder) return;
+
+    const modal = document.querySelector('.reminder-modal');
+    if (modal) modal.remove();
+
+    setTimeout(() => {
+      this.showReminderModal(this.activeReminder);
+    }, 15 * 60 * 1000);
+
+    this.showMessage('⏰ Recordatorio pospuesto 15 minutos', 'info');
+    this.activeReminder = null;
+  }
+
+  dismissReminder() {
+    const modal = document.querySelector('.reminder-modal');
+    if (modal) modal.remove();
+    this.activeReminder = null;
+  }
+
   showScreen(screenName) {
     logger.log('Mostrando pantalla:', screenName);
     this.currentScreen = screenName;
     
     const app = document.getElementById('app');
+    if (!app) {
+      logger.error('Elemento #app no encontrado');
+      return;
+    }
+    
     app.innerHTML = '';
 
     switch (screenName) {
@@ -68,6 +224,9 @@ class FarmaFollowApp {
         break;
       case 'reminders':
         this.renderReminders(app);
+        break;
+      case 'my-consultations':
+        this.renderMyConsultations(app);
         break;
       case 'consult':
         this.renderConsult(app);
@@ -168,6 +327,7 @@ class FarmaFollowApp {
         this.showScreen('admin-dashboard');
       } else {
         this.showScreen('dashboard');
+        this.startReminderChecker();
       }
     } catch (error) {
       this.showMessage('Error: ' + error.message, 'error');
@@ -189,7 +349,6 @@ class FarmaFollowApp {
     }
   }
 
-  // PANEL DE PACIENTE
   async renderPatientDashboard(container) {
     try {
       const [medications, reminders] = await Promise.all([
@@ -211,43 +370,21 @@ class FarmaFollowApp {
             </button>
           </div>
 
-          <div class="stats-grid">
-            <div class="stat-card">
-              <div class="stat-icon">💊</div>
-              <div class="stat-content">
-                <h3>${medications.length}</h3>
-                <p>Medicamentos</p>
+          <div class="adherence-card">
+            <div class="adherence-content">
+              <div class="adherence-chart">
+                <div class="circular-progress" style="--progress: ${adherence}%">
+                  <span class="adherence-percentage">${adherence}%</span>
+                </div>
               </div>
-            </div>
-            
-            <div class="stat-card">
-              <div class="stat-icon">📊</div>
-              <div class="stat-content">
-                <h3>${adherence}%</h3>
-                <p>Adherencia</p>
-              </div>
-            </div>
-            
-            <div class="stat-card">
-              <div class="stat-icon">🔔</div>
-              <div class="stat-content">
-                <h3>${reminders.filter(r => r.isActive).length}</h3>
-                <p>Recordatorios</p>
+              <div class="adherence-info">
+                <h2>Tu Adherencia</h2>
+                <p>${adherence >= 90 ? '¡Excelente!' : adherence >= 70 ? 'Muy bien' : 'Puedes mejorar'}</p>
               </div>
             </div>
           </div>
 
           <div id="medicationsContainer" class="medications-container"></div>
-          
-          <div class="card" style="margin-top: 2rem;">
-            <h3>💬 Mis Consultas</h3>
-            <div id="patientConsultations" class="consultations-list">
-              <div class="loading">Cargando consultas...</div>
-            </div>
-            <button class="btn btn-primary" onclick="app.showScreen('consult')">
-              📝 Nueva Consulta
-            </button>
-          </div>
         </div>
       `;
 
@@ -271,21 +408,22 @@ class FarmaFollowApp {
             <p class="medication-description">${med.description}</p>
             <div class="medication-actions">
               <button class="btn btn-primary" onclick="app.showMedicationDetail('${med._id}')">
-                Ver Detalles
+                <i class="icon">🎥</i> Ver Detalles
               </button>
               <button class="btn btn-secondary" onclick="app.showScreen('reminders')">
-                Recordatorios
+                <i class="icon">⏰</i> Recordatorios
+              </button>
+              <button class="btn btn-secondary" onclick="app.showScreen('my-consultations')">
+                <i class="icon">💬</i> Mis Consultas
               </button>
               <button class="btn btn-secondary" onclick="app.showScreen('consult')">
-                Consultar
+                <i class="icon">❓</i> Consultar
               </button>
             </div>
           `;
           medicationsContainer.appendChild(card);
         });
       }
-
-      this.loadConsultations();
 
     } catch (error) {
       logger.error('Error cargando dashboard:', error);
@@ -365,46 +503,343 @@ class FarmaFollowApp {
           <button class="btn btn-secondary" onclick="app.showScreen('dashboard')">
             ← Volver
           </button>
-          <h1>🔔 Recordatorios</h1>
+          <h1>⏰ Recordatorios</h1>
         </div>
 
-        <div id="remindersList" class="reminders-list"></div>
+        <div class="reminders-tabs">
+          <button class="tab-btn active" data-tab="list">
+            📋 Lista
+          </button>
+          <button class="tab-btn" data-tab="calendar">
+            📅 Calendario
+          </button>
+          <button class="tab-btn" data-tab="create">
+            ➕ Crear Nuevo
+          </button>
+        </div>
+
+        <div id="remindersContent" class="reminders-content"></div>
       </div>
     `;
 
-    this.renderRemindersList();
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        e.target.classList.add('active');
+        this.showReminderTab(e.target.dataset.tab);
+      });
+    });
+
+    this.showReminderTab('list');
   }
 
-  async renderRemindersList() {
-    const container = document.getElementById('remindersList');
+  async showReminderTab(tab) {
+    const container = document.getElementById('remindersContent');
     if (!container) return;
 
+    switch (tab) {
+      case 'list':
+        await this.renderRemindersList(container);
+        break;
+      case 'calendar':
+        await this.renderReminderCalendar(container);
+        break;
+      case 'create':
+        await this.renderCreateReminder(container);
+        break;
+    }
+  }
+
+  async renderRemindersList(container) {
     try {
       this.reminders = await api.getReminders();
 
       if (this.reminders.length === 0) {
-        container.innerHTML = '<div class="empty-state">No tienes recordatorios configurados</div>';
+        container.innerHTML = `
+          <div class="empty-state">
+            <p>📭 No tienes recordatorios configurados</p>
+            <p style="color: var(--text-secondary);">Crea uno en la pestaña "Crear Nuevo"</p>
+          </div>
+        `;
         return;
       }
 
-      container.innerHTML = this.reminders.map(reminder => `
-        <div class="reminder-card ${reminder.isActive ? 'active' : 'inactive'}">
-          <div class="reminder-info">
-            <h3>${reminder.medication?.name || 'Medicamento'}</h3>
-            <p>🕐 ${reminder.time}</p>
-            <p>📅 ${this.getFrequencyText(reminder.frequency)}</p>
-          </div>
-          <div class="reminder-actions">
-            <button 
-              class="btn ${reminder.isActive ? 'btn-secondary' : 'btn-primary'}" 
-              onclick="app.toggleReminder('${reminder._id}')">
-              ${reminder.isActive ? 'Desactivar' : 'Activar'}
-            </button>
-          </div>
+      container.innerHTML = `
+        <div class="reminders-list">
+          ${this.reminders.map(reminder => `
+            <div class="reminder-card ${reminder.isActive ? 'active' : 'inactive'}">
+              <div class="reminder-info">
+                <h3>${reminder.medication?.name || 'Medicamento'}</h3>
+                <p>🕐 ${reminder.time}</p>
+                <p>📅 ${this.getFrequencyText(reminder.frequency)}</p>
+                ${reminder.notes ? `<p class="reminder-notes">${reminder.notes}</p>` : ''}
+              </div>
+              <div class="reminder-actions">
+                <button 
+                  class="btn ${reminder.isActive ? 'btn-warning' : 'btn-primary'}" 
+                  onclick="app.toggleReminder('${reminder._id}')">
+                  ${reminder.isActive ? 'Pausar' : 'Activar'}
+                </button>
+                <button 
+                  class="btn btn-danger" 
+                  onclick="app.deleteReminder('${reminder._id}')">
+                  Eliminar
+                </button>
+              </div>
+            </div>
+          `).join('')}
         </div>
-      `).join('');
+      `;
     } catch (error) {
       container.innerHTML = '<div class="error">Error cargando recordatorios</div>';
+    }
+  }
+
+  async renderReminderCalendar(container) {
+    try {
+      this.reminders = await api.getReminders();
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = now.getMonth();
+      
+      const firstDay = new Date(year, month, 1);
+      const lastDay = new Date(year, month + 1, 0);
+      const daysInMonth = lastDay.getDate();
+      const startDayOfWeek = firstDay.getDay();
+
+      const calendar = [];
+      let day = 1;
+
+      for (let i = 0; i < 6; i++) {
+        const week = [];
+        for (let j = 0; j < 7; j++) {
+          if ((i === 0 && j < startDayOfWeek) || day > daysInMonth) {
+            week.push(null);
+          } else {
+            const date = new Date(year, month, day);
+            const dateStr = date.toISOString().split('T')[0];
+            
+            const dayReminders = this.reminders.filter(r => {
+              if (!r.isActive) return false;
+              
+              if (r.frequency === 'daily') return true;
+              if (r.frequency === 'weekly' && r.daysOfWeek) {
+                return r.daysOfWeek.includes(date.getDay());
+              }
+              return false;
+            });
+
+            week.push({
+              day: day,
+              date: dateStr,
+              reminders: dayReminders,
+              isToday: date.toDateString() === now.toDateString()
+            });
+            day++;
+          }
+        }
+        calendar.push(week);
+        if (day > daysInMonth) break;
+      }
+
+      const monthNames = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+        'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+
+      container.innerHTML = `
+        <div class="calendar-container">
+          <div class="calendar-header">
+            <h2>${monthNames[month]} ${year}</h2>
+          </div>
+          
+          <div class="calendar">
+            <div class="calendar-weekdays">
+              <div>Dom</div>
+              <div>Lun</div>
+              <div>Mar</div>
+              <div>Mié</div>
+              <div>Jue</div>
+              <div>Vie</div>
+              <div>Sáb</div>
+            </div>
+            
+            <div class="calendar-days">
+              ${calendar.map(week => week.map(dayData => {
+                if (!dayData) return '<div class="calendar-day empty"></div>';
+                
+                return `
+                  <div class="calendar-day ${dayData.isToday ? 'today' : ''} ${dayData.reminders.length > 0 ? 'has-reminders' : ''}">
+                    <div class="day-number">${dayData.day}</div>
+                    ${dayData.reminders.length > 0 ? `
+                      <div class="day-reminders">
+                        ${dayData.reminders.map(r => `
+                          <div class="calendar-reminder" title="${r.medication?.name} - ${r.time}">
+                            💊 ${r.time}
+                          </div>
+                        `).join('')}
+                      </div>
+                    ` : ''}
+                  </div>
+                `;
+              }).join('')).join('')}
+            </div>
+          </div>
+
+          <div class="calendar-legend">
+            <div class="legend-item">
+              <div class="legend-color today"></div>
+              <span>Hoy</span>
+            </div>
+            <div class="legend-item">
+              <div class="legend-color has-reminders"></div>
+              <span>Con recordatorios</span>
+            </div>
+          </div>
+        </div>
+      `;
+
+    } catch (error) {
+      container.innerHTML = '<div class="error">Error cargando calendario</div>';
+    }
+  }
+
+  async renderCreateReminder(container) {
+    try {
+      const medications = await api.getMedications();
+
+      if (medications.length === 0) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <p>❌ No tienes medicamentos asignados</p>
+            <p style="color: var(--text-secondary);">Tu farmacéutico debe asignarte un medicamento primero</p>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = `
+        <div class="create-reminder-form">
+          <h2>➕ Crear Nuevo Recordatorio</h2>
+          
+          <form id="reminderForm">
+            <div class="form-group">
+              <label for="reminderMedication">Medicamento *</label>
+              <select id="reminderMedication" required>
+                <option value="">Selecciona un medicamento</option>
+                ${medications.map(med => `
+                  <option value="${med._id}">${med.name}</option>
+                `).join('')}
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="reminderTime">Hora *</label>
+              <input type="time" id="reminderTime" required>
+            </div>
+
+            <div class="form-group">
+              <label for="reminderFrequency">Frecuencia *</label>
+              <select id="reminderFrequency" required onchange="app.updateFrequencyFields()">
+                <option value="daily">Todos los días</option>
+                <option value="weekly">Días específicos de la semana</option>
+              </select>
+            </div>
+
+            <div id="frequencyFields"></div>
+
+            <div class="form-group">
+              <label for="reminderNotes">Notas (opcional)</label>
+              <textarea id="reminderNotes" rows="2" placeholder="Ej: Tomar con comida"></textarea>
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-block">
+              Crear Recordatorio
+            </button>
+          </form>
+        </div>
+      `;
+
+      document.getElementById('reminderForm').addEventListener('submit', (e) => {
+        e.preventDefault();
+        this.createReminder();
+      });
+
+      this.updateFrequencyFields();
+
+    } catch (error) {
+      container.innerHTML = '<div class="error">Error cargando formulario</div>';
+    }
+  }
+
+  updateFrequencyFields() {
+    const frequency = document.getElementById('reminderFrequency')?.value;
+    const container = document.getElementById('frequencyFields');
+    if (!container) return;
+
+    if (frequency === 'weekly') {
+      container.innerHTML = `
+        <div class="form-group">
+          <label>Días de la semana *</label>
+          <div class="days-selector">
+            <label class="day-checkbox">
+              <input type="checkbox" name="days" value="0"> Dom
+            </label>
+            <label class="day-checkbox">
+              <input type="checkbox" name="days" value="1"> Lun
+            </label>
+            <label class="day-checkbox">
+              <input type="checkbox" name="days" value="2"> Mar
+            </label>
+            <label class="day-checkbox">
+              <input type="checkbox" name="days" value="3"> Mié
+            </label>
+            <label class="day-checkbox">
+              <input type="checkbox" name="days" value="4"> Jue
+            </label>
+            <label class="day-checkbox">
+              <input type="checkbox" name="days" value="5"> Vie
+            </label>
+            <label class="day-checkbox">
+              <input type="checkbox" name="days" value="6"> Sáb
+            </label>
+          </div>
+        </div>
+      `;
+    } else {
+      container.innerHTML = '';
+    }
+  }
+
+  async createReminder() {
+    const medication = document.getElementById('reminderMedication').value;
+    const time = document.getElementById('reminderTime').value;
+    const frequency = document.getElementById('reminderFrequency').value;
+    const notes = document.getElementById('reminderNotes').value;
+
+    let daysOfWeek = null;
+    if (frequency === 'weekly') {
+      const selectedDays = Array.from(document.querySelectorAll('input[name="days"]:checked'))
+        .map(cb => parseInt(cb.value));
+      
+      if (selectedDays.length === 0) {
+        this.showMessage('Selecciona al menos un día de la semana', 'error');
+        return;
+      }
+      daysOfWeek = selectedDays;
+    }
+
+    try {
+      await api.createReminder({
+        medication,
+        time,
+        frequency,
+        daysOfWeek,
+        notes
+      });
+
+      this.showMessage('✅ Recordatorio creado correctamente', 'success');
+      this.showReminderTab('list');
+    } catch (error) {
+      this.showMessage('Error creando recordatorio: ' + error.message, 'error');
     }
   }
 
@@ -421,98 +856,51 @@ class FarmaFollowApp {
     try {
       const reminder = this.reminders.find(r => r._id === reminderId);
       await api.updateReminder(reminderId, { isActive: !reminder.isActive });
-      await this.renderRemindersList();
       this.showMessage('Recordatorio actualizado', 'success');
+      this.showReminderTab('list');
     } catch (error) {
       this.showMessage('Error actualizando recordatorio', 'error');
     }
   }
 
-  renderConsult(container) {
+  async deleteReminder(reminderId) {
+    if (!confirm('¿Estás seguro de eliminar este recordatorio?')) return;
+
+    try {
+      await api.deleteReminder(reminderId);
+      this.showMessage('Recordatorio eliminado', 'success');
+      this.showReminderTab('list');
+    } catch (error) {
+      this.showMessage('Error eliminando recordatorio', 'error');
+    }
+  }
+
+  async renderMyConsultations(container) {
     container.innerHTML = `
-      <div class="consult-screen">
+      <div class="my-consultations-screen">
         <div class="screen-header">
           <button class="btn btn-secondary" onclick="app.showScreen('dashboard')">
             ← Volver
           </button>
-          <h1>💬 Consultar al Farmacéutico</h1>
+          <h1>💬 Mis Consultas</h1>
         </div>
 
-        <form id="consultForm" class="consult-form">
-          <div class="form-group">
-            <label for="consultSubject">Asunto</label>
-            <select id="consultSubject" required>
-              <option value="">Selecciona un asunto</option>
-              <option value="dosificacion">Dosis y Administración</option>
-              <option value="efectos-secundarios">Efectos Secundarios</option>
-              <option value="interacciones">Interacciones</option>
-              <option value="almacenamiento">Almacenamiento</option>
-              <option value="otros">Otros</option>
-            </select>
-          </div>
+        <div id="consultationsContent" class="consultations-content">
+          <div class="loading">Cargando consultas...</div>
+        </div>
 
-          <div class="form-group">
-            <label for="consultMessage">Mensaje *</label>
-            <textarea id="consultMessage" rows="6" required 
-              placeholder="Describe tu consulta..."></textarea>
-          </div>
-
-          <div class="form-group">
-            <label for="consultContact">Teléfono de Contacto (opcional)</label>
-            <input type="tel" id="consultContact" placeholder="123456789">
-          </div>
-
-          <button type="submit" class="btn btn-primary">
-            Enviar Consulta
-          </button>
-        </form>
+        <button class="btn btn-primary btn-block" onclick="app.showScreen('consult')" 
+          style="margin-top: 2rem;">
+          ➕ Nueva Consulta
+        </button>
       </div>
     `;
 
-    document.getElementById('consultForm').addEventListener('submit', (e) => {
-      e.preventDefault();
-      this.sendConsult();
-    });
+    await this.loadMyConsultations();
   }
 
-  async sendConsult() {
-    const subject = document.getElementById('consultSubject').value;
-    const message = document.getElementById('consultMessage').value.trim();
-    const contact = document.getElementById('consultContact').value.trim();
-    
-    if (!subject || !message) {
-      this.showMessage('Por favor completa los campos obligatorios', 'error');
-      return;
-    }
-    
-    const submitBtn = document.querySelector('.btn-primary');
-    const originalText = submitBtn.textContent;
-    submitBtn.textContent = '⏳ Enviando...';
-    submitBtn.disabled = true;
-    
-    try {
-      await api.createConsultation({
-        subject,
-        message,
-        contact,
-        urgency: subject === 'efectos-secundarios' ? 'high' : 'medium'
-      });
-      
-      this.showMessage('✅ ¡Consulta enviada correctamente! Puedes verla en "Mis Consultas". Te responderemos pronto.', 'success');
-      
-      setTimeout(() => {
-        this.showScreen('dashboard');
-        this.loadConsultations();
-      }, 3000);
-    } catch (error) {
-      submitBtn.textContent = originalText;
-      submitBtn.disabled = false;
-      this.showMessage('❌ Error al enviar consulta: ' + error.message, 'error');
-    }
-  }
-
-  async loadConsultations() {
-    const container = document.getElementById('patientConsultations');
+  async loadMyConsultations() {
+    const container = document.getElementById('consultationsContent');
     if (!container) return;
     
     try {
@@ -523,7 +911,7 @@ class FarmaFollowApp {
           <div class="empty-state">
             <p>📭 No tienes consultas todavía</p>
             <p style="color: var(--text-secondary); font-size: 0.9rem;">
-              Haz una consulta al farmacéutico usando el botón de abajo
+              Haz tu primera consulta al farmacéutico
             </p>
           </div>
         `;
@@ -567,11 +955,93 @@ class FarmaFollowApp {
       container.innerHTML = `
         <div class="error-state">
           <p>❌ Error al cargar consultas</p>
-          <button class="btn btn-secondary" onclick="app.loadConsultations()">
+          <button class="btn btn-secondary" onclick="app.loadMyConsultations()">
             Reintentar
           </button>
         </div>
       `;
+    }
+  }
+
+  renderConsult(container) {
+    container.innerHTML = `
+      <div class="consult-screen">
+        <div class="screen-header">
+          <button class="btn btn-secondary" onclick="app.showScreen('dashboard')">
+            ← Volver
+          </button>
+          <h1>💬 Consultar al Farmacéutico</h1>
+        </div>
+
+        <form id="consultForm" class="consult-form">
+          <div class="form-group">
+            <label for="consultSubject">Asunto *</label>
+            <select id="consultSubject" required>
+              <option value="">Selecciona un asunto</option>
+              <option value="dosificacion">Dosis y Administración</option>
+              <option value="efectos-secundarios">Efectos Secundarios</option>
+              <option value="interacciones">Interacciones</option>
+              <option value="almacenamiento">Almacenamiento</option>
+              <option value="otros">Otros</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="consultMessage">Mensaje *</label>
+            <textarea id="consultMessage" rows="6" required 
+              placeholder="Describe tu consulta..."></textarea>
+          </div>
+
+          <div class="form-group">
+            <label for="consultContact">Teléfono de Contacto (opcional)</label>
+            <input type="tel" id="consultContact" placeholder="123456789">
+          </div>
+
+          <button type="submit" class="btn btn-primary btn-block">
+            Enviar Consulta
+          </button>
+        </form>
+      </div>
+    `;
+
+    document.getElementById('consultForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      this.sendConsult();
+    });
+  }
+
+  async sendConsult() {
+    const subject = document.getElementById('consultSubject').value;
+    const message = document.getElementById('consultMessage').value.trim();
+    const contact = document.getElementById('consultContact').value.trim();
+    
+    if (!subject || !message) {
+      this.showMessage('Por favor completa los campos obligatorios', 'error');
+      return;
+    }
+    
+    const submitBtn = document.querySelector('.btn-primary');
+    const originalText = submitBtn.textContent;
+    submitBtn.textContent = '⏳ Enviando...';
+    submitBtn.disabled = true;
+    
+    try {
+      await api.createConsultation({
+        subject,
+        message,
+        contact,
+        urgency: subject === 'efectos-secundarios' ? 'high' : 'medium'
+      });
+      
+      this.showMessage('✅ ¡Consulta enviada correctamente! Puedes verla en "Mis Consultas"', 'success');
+      
+      setTimeout(() => {
+        this.showScreen('my-consultations');
+      }, 2000);
+    } catch (error) {
+      submitBtn.textContent = originalText;
+      submitBtn.disabled = false;
+      this.showMessage('❌ Error al enviar consulta: ' + error.message, 'error');
     }
   }
 
@@ -585,51 +1055,6 @@ class FarmaFollowApp {
     };
     return subjects[subject] || subject;
   }
-
-  showReminderModal(reminder) {
-    this.activeReminder = reminder;
-    
-    const modal = document.createElement('div');
-    modal.className = 'modal active';
-    modal.innerHTML = `
-      <div class="modal-content">
-        <h2>🔔 Recordatorio de Medicación</h2>
-        <div class="reminder-modal-body">
-          <p class="medication-name">${reminder.medication?.name}</p>
-          <p class="reminder-time">Es hora de tomar tu medicación</p>
-          <p class="reminder-notes">${reminder.notes || ''}</p>
-        </div>
-        <div class="modal-actions">
-          <button class="btn btn-primary" onclick="app.confirmDose(true)">
-            ✓ Tomado
-          </button>
-          <button class="btn btn-secondary" onclick="app.confirmDose(false)">
-            ✗ Posponer
-          </button>
-        </div>
-      </div>
-    `;
-    
-    document.body.appendChild(modal);
-  }
-
-  async confirmDose(taken) {
-    const modal = document.querySelector('.modal');
-    if (modal) modal.remove();
-
-    if (this.activeReminder && taken) {
-      try {
-        await api.recordDose(this.activeReminder._id, taken);
-        this.showMessage('Dosis registrada correctamente', 'success');
-      } catch (error) {
-        logger.error('Error registrando dosis:', error);
-      }
-    }
-
-    this.activeReminder = null;
-  }
-
-  // ===== PANEL DE ADMINISTRADOR =====
 
   async renderAdminDashboard(container) {
     try {
@@ -661,7 +1086,6 @@ class FarmaFollowApp {
         </div>
       `;
 
-      // Setup nav buttons
       document.querySelectorAll('.nav-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
           document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
@@ -702,7 +1126,6 @@ class FarmaFollowApp {
   async renderAnalytics(container) {
     try {
       const analytics = await api.getAnalytics();
-
       const m = analytics.generalMetrics;
 
       container.innerHTML = `
@@ -795,13 +1218,11 @@ class FarmaFollowApp {
         </div>
       `;
 
-      // Cargar datos
       const [users, medications] = await Promise.all([
         api.getUsers(),
         api.getMedications()
       ]);
 
-      // Poblar filtros
       const medicationFilter = document.getElementById('filterMedication');
       medications.forEach(med => {
         const option = document.createElement('option');
@@ -819,13 +1240,11 @@ class FarmaFollowApp {
         diseaseFilter.appendChild(option);
       });
 
-      // Event listeners para filtros
       document.getElementById('searchPatients').addEventListener('input', () => this.filterPatients(users, medications));
       document.getElementById('filterMedication').addEventListener('change', () => this.filterPatients(users, medications));
       document.getElementById('filterDisease').addEventListener('change', () => this.filterPatients(users, medications));
       document.getElementById('filterAdherence').addEventListener('change', () => this.filterPatients(users, medications));
 
-      // Renderizar tabla inicial
       this.filterPatients(users, medications);
 
     } catch (error) {
@@ -841,7 +1260,6 @@ class FarmaFollowApp {
 
     let filtered = users;
 
-    // Filtro de búsqueda
     if (search) {
       filtered = filtered.filter(u => 
         u.name.toLowerCase().includes(search) || 
@@ -849,7 +1267,6 @@ class FarmaFollowApp {
       );
     }
 
-    // Filtro de medicamento
     if (medFilter) {
       const med = medications.find(m => m._id === medFilter);
       if (med && med.patients) {
@@ -858,12 +1275,10 @@ class FarmaFollowApp {
       }
     }
 
-    // Filtro de enfermedad
     if (diseaseFilter) {
       filtered = filtered.filter(u => u.diseases && u.diseases.includes(diseaseFilter));
     }
 
-    // Filtro de adherencia
     if (adherenceFilter) {
       const [min, max] = adherenceFilter.split('-').map(Number);
       filtered = filtered.filter(u => {
@@ -872,7 +1287,6 @@ class FarmaFollowApp {
       });
     }
 
-    // Renderizar tabla
     this.renderPatientsTable(filtered, medications);
   }
 
@@ -1230,6 +1644,7 @@ class FarmaFollowApp {
   logout() {
     localStorage.removeItem('token');
     this.user = null;
+    this.stopReminderChecker();
     this.showScreen('login');
   }
 }
