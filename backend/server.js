@@ -36,6 +36,7 @@ app.use('/api/medications', require('./routes/medications'));
 app.use('/api/reminders', require('./routes/reminders'));
 app.use('/api/consultations', require('./routes/consultations'));
 app.use('/api/analytics', require('./routes/analytics'));
+app.use('/api/questionnaires', require('./routes/questionnaires'));
 
 // Rutas de cuestionarios - PREPARADO PARA FASE 2
 // Descomenta cuando crees el archivo routes/questionnaires.js

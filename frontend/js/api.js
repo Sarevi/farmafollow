@@ -1,4 +1,4 @@
-// ===== API CLIENT PARA FARMAFOLLOW =====
+// ===== API CLIENT PARA FARMAFOLLOW - COMPLETO =====
 
 const api = {
   baseURL: '/api',
@@ -47,16 +47,6 @@ const api = {
     return await response.json();
   },
 
-  async updateProfile(data) {
-    const response = await fetch(`${this.baseURL}/auth/profile`, {
-      method: 'PUT',
-      headers: this.getHeaders(),
-      body: JSON.stringify(data)
-    });
-    if (!response.ok) throw new Error('Error actualizando perfil');
-    return await response.json();
-  },
-
   // ===== MEDICATIONS =====
   
   async getMedications() {
@@ -85,16 +75,6 @@ const api = {
     return await response.json();
   },
 
-  async updateMedication(id, data) {
-    const response = await fetch(`${this.baseURL}/medications/${id}`, {
-      method: 'PUT',
-      headers: this.getHeaders(),
-      body: JSON.stringify(data)
-    });
-    if (!response.ok) throw new Error('Error actualizando medicamento');
-    return await response.json();
-  },
-
   async deleteMedication(id) {
     const response = await fetch(`${this.baseURL}/medications/${id}`, {
       method: 'DELETE',
@@ -111,14 +91,6 @@ const api = {
       headers: this.getHeaders()
     });
     if (!response.ok) throw new Error('Error obteniendo recordatorios');
-    return await response.json();
-  },
-
-  async getReminder(id) {
-    const response = await fetch(`${this.baseURL}/reminders/${id}`, {
-      headers: this.getHeaders()
-    });
-    if (!response.ok) throw new Error('Error obteniendo recordatorio');
     return await response.json();
   },
 
@@ -142,15 +114,6 @@ const api = {
     return await response.json();
   },
 
-  async deleteReminder(id) {
-    const response = await fetch(`${this.baseURL}/reminders/${id}`, {
-      method: 'DELETE',
-      headers: this.getHeaders()
-    });
-    if (!response.ok) throw new Error('Error eliminando recordatorio');
-    return await response.json();
-  },
-
   async recordDose(reminderId, taken, notes = '') {
     const response = await fetch(`${this.baseURL}/reminders/${reminderId}/record-dose`, {
       method: 'POST',
@@ -158,14 +121,6 @@ const api = {
       body: JSON.stringify({ taken, notes })
     });
     if (!response.ok) throw new Error('Error registrando dosis');
-    return await response.json();
-  },
-
-  async getReminderHistory(reminderId) {
-    const response = await fetch(`${this.baseURL}/reminders/${reminderId}/history`, {
-      headers: this.getHeaders()
-    });
-    if (!response.ok) throw new Error('Error obteniendo historial');
     return await response.json();
   },
 
@@ -179,22 +134,6 @@ const api = {
 
   // ===== CONSULTATIONS =====
   
-  async getConsultations() {
-    const response = await fetch(`${this.baseURL}/consultations`, {
-      headers: this.getHeaders()
-    });
-    if (!response.ok) throw new Error('Error obteniendo consultas');
-    return await response.json();
-  },
-
-  async getConsultation(id) {
-    const response = await fetch(`${this.baseURL}/consultations/${id}`, {
-      headers: this.getHeaders()
-    });
-    if (!response.ok) throw new Error('Error obteniendo consulta');
-    return await response.json();
-  },
-
   async createConsultation(data) {
     const response = await fetch(`${this.baseURL}/consultations`, {
       method: 'POST',
@@ -205,23 +144,31 @@ const api = {
     return await response.json();
   },
 
-  async updateConsultation(id, data) {
-    const response = await fetch(`${this.baseURL}/consultations/${id}`, {
-      method: 'PUT',
-      headers: this.getHeaders(),
-      body: JSON.stringify(data)
+  async getMyConsultations() {
+    const response = await fetch(`${this.baseURL}/consultations`, {
+      headers: this.getHeaders()
     });
-    if (!response.ok) throw new Error('Error actualizando consulta');
+    if (!response.ok) throw new Error('Error obteniendo mis consultas');
     return await response.json();
   },
 
-  async addMessage(consultationId, message) {
-    const response = await fetch(`${this.baseURL}/consultations/${consultationId}/messages`, {
-      method: 'POST',
-      headers: this.getHeaders(),
-      body: JSON.stringify({ message })
+  // ===== ADMIN - CONSULTATIONS (FALTABAN ESTOS) =====
+  
+  async getAllConsultations() {
+    const response = await fetch(`${this.baseURL}/consultations/all`, {
+      headers: this.getHeaders()
     });
-    if (!response.ok) throw new Error('Error enviando mensaje');
+    if (!response.ok) throw new Error('Error obteniendo consultas');
+    return await response.json();
+  },
+
+  async respondConsultation(consultationId, responseText) {
+    const response = await fetch(`${this.baseURL}/consultations/${consultationId}/respond`, {
+      method: 'PUT',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ response: responseText })
+    });
+    if (!response.ok) throw new Error('Error respondiendo consulta');
     return await response.json();
   },
 
@@ -232,14 +179,6 @@ const api = {
       headers: this.getHeaders()
     });
     if (!response.ok) throw new Error('Error obteniendo analytics');
-    return await response.json();
-  },
-
-  async getAdherenceReport() {
-    const response = await fetch(`${this.baseURL}/analytics/adherence`, {
-      headers: this.getHeaders()
-    });
-    if (!response.ok) throw new Error('Error obteniendo reporte de adherencia');
     return await response.json();
   },
 
@@ -258,115 +197,6 @@ const api = {
       headers: this.getHeaders()
     });
     if (!response.ok) throw new Error('Error obteniendo usuario');
-    return await response.json();
-  },
-
-  async updateUser(id, data) {
-    const response = await fetch(`${this.baseURL}/users/${id}`, {
-      method: 'PUT',
-      headers: this.getHeaders(),
-      body: JSON.stringify(data)
-    });
-    if (!response.ok) throw new Error('Error actualizando usuario');
-    return await response.json();
-  },
-
-  async deleteUser(id) {
-    const response = await fetch(`${this.baseURL}/users/${id}`, {
-      method: 'DELETE',
-      headers: this.getHeaders()
-    });
-    if (!response.ok) throw new Error('Error eliminando usuario');
-    return await response.json();
-  },
-
-  // ===== CUESTIONARIOS (NUEVOS) =====
-
-  // Paciente - Cuestionarios pendientes
-  async getPendingQuestionnaires() {
-    const response = await fetch(`${this.baseURL}/questionnaires/pending/list`, {
-      headers: this.getHeaders()
-    });
-    if (!response.ok) throw new Error('Error obteniendo cuestionarios pendientes');
-    return await response.json();
-  },
-
-  // Paciente - Enviar respuesta
-  async submitQuestionnaire(responseId, responses) {
-    const response = await fetch(`${this.baseURL}/questionnaires/${responseId}/respond`, {
-      method: 'POST',
-      headers: this.getHeaders(),
-      body: JSON.stringify({ responses })
-    });
-    if (!response.ok) throw new Error('Error enviando cuestionario');
-    return await response.json();
-  },
-
-  // Paciente - Mis respuestas completadas
-  async getMyQuestionnaireResponses() {
-    const response = await fetch(`${this.baseURL}/questionnaires/my-responses`, {
-      headers: this.getHeaders()
-    });
-    if (!response.ok) throw new Error('Error obteniendo mis respuestas');
-    return await response.json();
-  },
-
-  // Admin - Crear cuestionario
-  async createQuestionnaire(data) {
-    const response = await fetch(`${this.baseURL}/questionnaires`, {
-      method: 'POST',
-      headers: this.getHeaders(),
-      body: JSON.stringify(data)
-    });
-    if (!response.ok) throw new Error('Error creando cuestionario');
-    return await response.json();
-  },
-
-  // Admin - Obtener todos los cuestionarios
-  async getQuestionnaires() {
-    const response = await fetch(`${this.baseURL}/questionnaires`, {
-      headers: this.getHeaders()
-    });
-    if (!response.ok) throw new Error('Error obteniendo cuestionarios');
-    return await response.json();
-  },
-
-  // Admin - Obtener un cuestionario específico
-  async getQuestionnaire(id) {
-    const response = await fetch(`${this.baseURL}/questionnaires/${id}`, {
-      headers: this.getHeaders()
-    });
-    if (!response.ok) throw new Error('Error obteniendo cuestionario');
-    return await response.json();
-  },
-
-  // Admin - Ver respuestas de un cuestionario
-  async getQuestionnaireResponses(questionnaireId) {
-    const response = await fetch(`${this.baseURL}/questionnaires/${questionnaireId}/responses`, {
-      headers: this.getHeaders()
-    });
-    if (!response.ok) throw new Error('Error obteniendo respuestas');
-    return await response.json();
-  },
-
-  // Admin - Actualizar cuestionario
-  async updateQuestionnaire(questionnaireId, data) {
-    const response = await fetch(`${this.baseURL}/questionnaires/${questionnaireId}`, {
-      method: 'PUT',
-      headers: this.getHeaders(),
-      body: JSON.stringify(data)
-    });
-    if (!response.ok) throw new Error('Error actualizando cuestionario');
-    return await response.json();
-  },
-
-  // Admin - Eliminar cuestionario
-  async deleteQuestionnaire(questionnaireId) {
-    const response = await fetch(`${this.baseURL}/questionnaires/${questionnaireId}`, {
-      method: 'DELETE',
-      headers: this.getHeaders()
-    });
-    if (!response.ok) throw new Error('Error eliminando cuestionario');
     return await response.json();
   }
 };
