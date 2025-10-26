@@ -14,9 +14,6 @@ class FarmaFollowApp {
       adherence: '',
       search: ''
     };
-    this.reminderCheckInterval = null;
-    this.selectedTimes = [];
-    this.selectedFrequency = 'weekly';
   }
 
   async init() {
@@ -29,8 +26,7 @@ class FarmaFollowApp {
         if (this.user.role === 'admin') {
           this.showScreen('admin-dashboard');
         } else {
-          // Verificar cuestionarios pendientes ANTES de ir al dashboard
-          await this.checkPendingQuestionnaires();
+          this.showScreen('dashboard');
         }
       } catch (error) {
         logger.error('Error verificando autenticación:', error);
@@ -42,240 +38,6 @@ class FarmaFollowApp {
 
     this.setupEventListeners();
     await notifications.requestPermission();
-    this.renderHeaderButtons();
-  }
-
-  // ===== CERRAR SESIÓN =====
-  
-  logout() {
-    localStorage.removeItem('token');
-    this.stopReminderChecker();
-    this.user = null;
-    this.showMessage('👋 Sesión cerrada correctamente', 'success');
-    setTimeout(() => {
-      window.location.reload();
-    }, 1000);
-  }
-
-  renderHeaderButtons() {
-    const header = document.querySelector('.header');
-    if (!header || !this.user) return;
-
-    // Agregar botón de cerrar sesión si no existe
-    if (!document.querySelector('.logout-btn')) {
-      const logoutBtn = document.createElement('button');
-      logoutBtn.className = 'logout-btn';
-      logoutBtn.innerHTML = '🚪 Cerrar Sesión';
-      logoutBtn.onclick = () => this.logout();
-      header.appendChild(logoutBtn);
-    }
-  }
-
-  // ===== SISTEMA DE CUESTIONARIOS OBLIGATORIOS =====
-  
-  async checkPendingQuestionnaires() {
-    try {
-      const pending = await api.getPendingQuestionnaires();
-      
-      if (pending && pending.length > 0) {
-        // Mostrar el primero
-        await this.showQuestionnairePopup(pending[0]);
-      } else {
-        // No hay pendientes, ir al dashboard
-        this.showScreen('dashboard');
-        this.startReminderChecker();
-      }
-    } catch (error) {
-      logger.error('Error verificando cuestionarios pendientes:', error);
-      // Si hay error, dejar pasar al dashboard
-      this.showScreen('dashboard');
-      this.startReminderChecker();
-    }
-  }
-
-  async showQuestionnairePopup(pendingResponse) {
-    const questionnaire = pendingResponse.questionnaire;
-    
-    // Crear popup OBLIGATORIO (no se puede cerrar)
-    const popup = document.createElement('div');
-    popup.className = 'questionnaire-popup-overlay';
-    popup.innerHTML = `
-      <div class="questionnaire-popup">
-        <div class="questionnaire-header">
-          <div class="questionnaire-icon">📋</div>
-          <h2>${questionnaire.title}</h2>
-          <p class="questionnaire-subtitle">${questionnaire.description || 'Por favor completa este cuestionario antes de continuar'}</p>
-        </div>
-
-        <form id="questionnaireForm" class="questionnaire-form">
-          ${questionnaire.questions.map((q, index) => this.renderQuestionHTML(q, index)).join('')}
-          
-          <div class="questionnaire-actions">
-            <button type="submit" class="btn btn-primary btn-lg">
-              📤 Enviar Cuestionario
-            </button>
-          </div>
-        </form>
-
-        <div class="questionnaire-footer">
-          ⚠️ Debes completar todas las preguntas requeridas
-        </div>
-      </div>
-    `;
-
-    document.body.appendChild(popup);
-
-    // Manejar envío
-    const form = document.getElementById('questionnaireForm');
-    form.onsubmit = async (e) => {
-      e.preventDefault();
-      await this.submitQuestionnaire(pendingResponse._id, questionnaire);
-    };
-  }
-
-  renderQuestionHTML(question, index) {
-    const num = index + 1;
-    let inputHTML = '';
-
-    switch (question.type) {
-      case 'text':
-        inputHTML = `
-          <textarea 
-            id="q_${question.id}" 
-            class="form-textarea" 
-            rows="3"
-            placeholder="Escribe tu respuesta aquí..."
-            ${question.required ? 'required' : ''}
-          ></textarea>
-        `;
-        break;
-
-      case 'scale':
-        const min = question.scaleMin || 1;
-        const max = question.scaleMax || 10;
-        inputHTML = `
-          <div class="scale-input-container">
-            <div class="scale-labels">
-              <span class="scale-label-min">${question.scaleMinLabel || min}</span>
-              <span class="scale-label-max">${question.scaleMaxLabel || max}</span>
-            </div>
-            <input 
-              type="range" 
-              id="q_${question.id}" 
-              class="scale-input" 
-              min="${min}" 
-              max="${max}" 
-              value="${Math.round((min + max) / 2)}"
-              oninput="document.getElementById('scaleValue_${question.id}').textContent = this.value"
-              ${question.required ? 'required' : ''}
-            />
-            <div class="scale-value" id="scaleValue_${question.id}">${Math.round((min + max) / 2)}</div>
-          </div>
-        `;
-        break;
-
-      case 'yesno':
-        inputHTML = `
-          <div class="radio-group">
-            <label class="radio-option">
-              <input type="radio" name="q_${question.id}" value="si" ${question.required ? 'required' : ''}/>
-              <span>✓ Sí</span>
-            </label>
-            <label class="radio-option">
-              <input type="radio" name="q_${question.id}" value="no" ${question.required ? 'required' : ''}/>
-              <span>✗ No</span>
-            </label>
-            <label class="radio-option">
-              <input type="radio" name="q_${question.id}" value="no_se" ${question.required ? 'required' : ''}/>
-              <span>? No estoy seguro/a</span>
-            </label>
-          </div>
-        `;
-        break;
-
-      case 'multiple':
-        inputHTML = `
-          <div class="radio-group">
-            ${(question.options || []).map((option, i) => `
-              <label class="radio-option">
-                <input type="radio" name="q_${question.id}" value="${option}" ${question.required ? 'required' : ''}/>
-                <span>${option}</span>
-              </label>
-            `).join('')}
-          </div>
-        `;
-        break;
-
-      case 'number':
-        inputHTML = `
-          <input 
-            type="number" 
-            id="q_${question.id}" 
-            class="form-input" 
-            placeholder="Ingresa un número"
-            ${question.required ? 'required' : ''}
-          />
-        `;
-        break;
-    }
-
-    return `
-      <div class="question-block">
-        <label class="question-label">
-          ${num}. ${question.text}
-          ${question.required ? '<span class="required-mark">*</span>' : ''}
-        </label>
-        ${inputHTML}
-      </div>
-    `;
-  }
-
-  async submitQuestionnaire(responseId, questionnaire) {
-    try {
-      // Recopilar respuestas
-      const responses = [];
-
-      for (const question of questionnaire.questions) {
-        let answer = null;
-
-        if (question.type === 'yesno' || question.type === 'multiple') {
-          const selected = document.querySelector(`input[name="q_${question.id}"]:checked`);
-          answer = selected ? selected.value : null;
-        } else {
-          const input = document.getElementById(`q_${question.id}`);
-          answer = input ? input.value : null;
-        }
-
-        if (question.required && (!answer || answer.trim() === '')) {
-          this.showMessage(`Por favor responde la pregunta: "${question.text}"`, 'warning');
-          return;
-        }
-
-        responses.push({
-          questionId: question.id,
-          answer: answer,
-          answerText: String(answer)
-        });
-      }
-
-      // Enviar al servidor
-      await api.submitQuestionnaire(responseId, responses);
-
-      // Remover popup
-      const popup = document.querySelector('.questionnaire-popup-overlay');
-      if (popup) popup.remove();
-
-      this.showMessage('✅ Cuestionario completado correctamente', 'success');
-
-      // Verificar si hay más cuestionarios pendientes
-      setTimeout(async () => {
-        await this.checkPendingQuestionnaires();
-      }, 1000);
-
-    } catch (error) {
-      logger.error('Error enviando cuestionario:', error);
-      this.showMessage('Error enviando cuestionario: ' + error.message, 'error');
-    }
   }
 
   setupEventListeners() {
@@ -284,309 +46,12 @@ class FarmaFollowApp {
     });
   }
 
-  // ===== SISTEMA DE RECORDATORIOS FUNCIONAL =====
-  
-  startReminderChecker() {
-    // Verificar recordatorios cada 30 segundos
-    this.reminderCheckInterval = setInterval(() => {
-      this.checkReminders();
-    }, 30000);
-    this.checkReminders(); // Verificar inmediatamente al iniciar
-  }
-
-  stopReminderChecker() {
-    if (this.reminderCheckInterval) {
-      clearInterval(this.reminderCheckInterval);
-      this.reminderCheckInterval = null;
-    }
-  }
-
-  async checkReminders() {
-    try {
-      const reminders = await api.getReminders();
-      const now = new Date();
-      const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-      const currentDay = now.getDay(); // 0 = Domingo, 1 = Lunes, ...
-
-      reminders.forEach(reminder => {
-        if (!reminder.isActive) return;
-        if (reminder.time !== currentTime) return;
-
-        let shouldNotify = false;
-        
-        if (reminder.frequency === 'daily') {
-          shouldNotify = true;
-        } else if (reminder.frequency === 'weekly' && reminder.daysOfWeek) {
-          shouldNotify = reminder.daysOfWeek.includes(currentDay);
-        } else if (reminder.frequency === 'biweekly') {
-          // Verificar si han pasado 14 días desde la última notificación
-          const lastNotified = localStorage.getItem(`reminder_${reminder._id}_lastDate`);
-          if (lastNotified) {
-            const daysSince = Math.floor((now - new Date(lastNotified)) / (1000 * 60 * 60 * 24));
-            shouldNotify = daysSince >= 14;
-          } else {
-            shouldNotify = true;
-          }
-        } else if (reminder.frequency === 'monthly') {
-          // Verificar si han pasado 28 días
-          const lastNotified = localStorage.getItem(`reminder_${reminder._id}_lastDate`);
-          if (lastNotified) {
-            const daysSince = Math.floor((now - new Date(lastNotified)) / (1000 * 60 * 60 * 24));
-            shouldNotify = daysSince >= 28;
-          } else {
-            shouldNotify = true;
-          }
-        }
-
-        if (shouldNotify) {
-          // Verificar que no se notificó en la última hora
-          const lastNotified = localStorage.getItem(`reminder_${reminder._id}_last`);
-          if (lastNotified) {
-            const lastTime = new Date(lastNotified);
-            const diffMinutes = (now - lastTime) / 1000 / 60;
-            if (diffMinutes < 60) return;
-          }
-
-          localStorage.setItem(`reminder_${reminder._id}_last`, now.toISOString());
-          localStorage.setItem(`reminder_${reminder._id}_lastDate`, now.toISOString());
-          this.showReminderNotification(reminder);
-        }
-      });
-    } catch (error) {
-      logger.error('Error verificando recordatorios:', error);
-    }
-  }
-
-  async showReminderNotification(reminder) {
-    const title = '💊 Hora de tomar tu medicación';
-    const body = `${reminder.medication?.name || 'Medicamento'} - ${reminder.time}`;
-
-    // Notificación del navegador
-    if (Notification.permission === 'granted') {
-      const notification = new Notification(title, {
-        body: body,
-        icon: '/icon-192.png',
-        badge: '/icon-192.png',
-        tag: reminder._id,
-        requireInteraction: true
-      });
-
-      notification.onclick = () => {
-        window.focus();
-        this.showReminderModal(reminder);
-        notification.close();
-      };
-    }
-
-    // Modal en la app
-    this.showReminderModal(reminder);
-  }
-
-  showReminderModal(reminder) {
-    this.activeReminder = reminder;
-    
-    const existingModal = document.querySelector('.reminder-modal');
-    if (existingModal) existingModal.remove();
-    
-    const modal = document.createElement('div');
-    modal.className = 'modal reminder-modal active';
-    modal.innerHTML = `
-      <div class="modal-content">
-        <h2>💊 Hora de tu Medicación</h2>
-        <div class="reminder-modal-body" style="text-align: center; padding: 2rem 0;">
-          <p style="font-size: 1.5rem; font-weight: 700; color: var(--primary); margin-bottom: 1rem;">
-            ${reminder.medication?.name || 'Medicamento'}
-          </p>
-          <p style="font-size: 1.2rem; color: var(--gray-600);">⏰ ${reminder.time}</p>
-          ${reminder.notes ? `<p style="margin-top: 1rem; color: var(--gray-600);">${reminder.notes}</p>` : ''}
-        </div>
-        <div class="modal-actions" style="display: flex; gap: 1rem; flex-direction: column;">
-          <button class="btn btn-primary btn-lg" onclick="app.confirmDose(true)">
-            ✓ Sí, me la he administrado
-          </button>
-          <button class="btn btn-secondary" onclick="app.postponeDose()">
-            ⏰ Posponer 15 minutos
-          </button>
-          <button class="btn btn-outline" onclick="app.confirmDose(false)">
-            ✗ No, omitir esta dosis
-          </button>
-        </div>
-      </div>
-    `;
-    
-    document.body.appendChild(modal);
-  }
-
-  async confirmDose(taken) {
-    if (!this.activeReminder) return;
-
-    const modal = document.querySelector('.reminder-modal');
-    if (modal) modal.remove();
-
-    try {
-      await api.recordDose(this.activeReminder._id, taken);
-      
-      if (taken) {
-        this.showMessage('✅ Dosis registrada correctamente', 'success');
-      } else {
-        this.showMessage('⚠️ Dosis omitida', 'warning');
-      }
-      
-      // Recargar dashboard para actualizar adherencia
-      if (this.currentScreen === 'dashboard') {
-        const app = document.getElementById('app');
-        await this.renderPatientDashboard(app);
-      }
-    } catch (error) {
-      logger.error('Error registrando dosis:', error);
-      this.showMessage('Error registrando dosis', 'error');
-    }
-
-    this.activeReminder = null;
-  }
-
-  postponeDose() {
-    if (!this.activeReminder) return;
-
-    const modal = document.querySelector('.reminder-modal');
-    if (modal) modal.remove();
-
-    setTimeout(() => {
-      this.showReminderModal(this.activeReminder);
-    }, 15 * 60 * 1000); // 15 minutos
-
-    this.showMessage('⏰ Recordatorio pospuesto 15 minutos', 'info');
-    this.activeReminder = null;
-  }
-
-  dismissReminder() {
-    const modal = document.querySelector('.reminder-modal');
-    if (modal) modal.remove();
-    this.activeReminder = null;
-  }
-
-  // ===== CÁLCULO DE ADHERENCIA Y ESTADÍSTICAS =====
-  
-  async calculateAdherence() {
-    try {
-      const reminders = await api.getReminders();
-      let totalDoses = 0;
-      let takenDoses = 0;
-
-      for (const reminder of reminders) {
-        if (reminder.history && reminder.history.length > 0) {
-          totalDoses += reminder.history.length;
-          takenDoses += reminder.history.filter(h => h.taken).length;
-        }
-      }
-
-      return totalDoses > 0 ? Math.round((takenDoses / totalDoses) * 100) : 100;
-    } catch (error) {
-      logger.error('Error calculando adherencia:', error);
-      return 87; // Valor por defecto
-    }
-  }
-
-  async calculateStreak() {
-    try {
-      const reminders = await api.getReminders();
-      let streak = 0;
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-
-      // Ordenar todas las dosis por fecha (más reciente primero)
-      const allDoses = [];
-      reminders.forEach(reminder => {
-        if (reminder.history) {
-          reminder.history.forEach(dose => {
-            allDoses.push({
-              date: new Date(dose.timestamp),
-              taken: dose.taken
-            });
-          });
-        }
-      });
-
-      allDoses.sort((a, b) => b.date - a.date);
-
-      // Contar días consecutivos tomando medicación
-      let currentDate = new Date(today);
-      for (let dose of allDoses) {
-        const doseDate = new Date(dose.date);
-        doseDate.setHours(0, 0, 0, 0);
-        
-        if (doseDate.getTime() === currentDate.getTime() && dose.taken) {
-          streak++;
-          currentDate.setDate(currentDate.getDate() - 1);
-        } else if (doseDate < currentDate) {
-          break;
-        }
-      }
-
-      return streak;
-    } catch (error) {
-      logger.error('Error calculando racha:', error);
-      return 12; // Valor por defecto
-    }
-  }
-
-  getNextReminder(reminders) {
-    const now = new Date();
-    const currentTime = now.getHours() * 60 + now.getMinutes();
-
-    // Buscar siguiente recordatorio hoy
-    const activeReminders = reminders.filter(r => r.isActive);
-    
-    for (let reminder of activeReminders) {
-      const [hours, minutes] = reminder.time.split(':').map(Number);
-      const reminderTime = hours * 60 + minutes;
-      
-      if (reminderTime > currentTime) {
-        return reminder.time;
-      }
-    }
-
-    // Si no hay más hoy, devolver el primero de mañana
-    if (activeReminders.length > 0) {
-      const sortedReminders = activeReminders.sort((a, b) => {
-        const [aH, aM] = a.time.split(':').map(Number);
-        const [bH, bM] = b.time.split(':').map(Number);
-        return (aH * 60 + aM) - (bH * 60 + bM);
-      });
-      return sortedReminders[0].time;
-    }
-
-    return '--:--';
-  }
-
   showScreen(screenName) {
     logger.log('Mostrando pantalla:', screenName);
     this.currentScreen = screenName;
     
     const app = document.getElementById('app');
-    if (!app) {
-      logger.error('Elemento #app no encontrado');
-      return;
-    }
-    
     app.innerHTML = '';
-
-    // Update header
-    const header = document.querySelector('.header');
-    const backBtn = document.querySelector('.back-btn');
-
-    if (screenName === 'login' || screenName === 'register') {
-      if (header) header.style.display = 'none';
-    } else {
-      if (header) header.style.display = 'flex';
-      if (backBtn) {
-        if (screenName === 'dashboard' || screenName === 'admin-dashboard') {
-          backBtn.classList.add('hidden');
-        } else {
-          backBtn.classList.remove('hidden');
-        }
-      }
-    }
 
     switch (screenName) {
       case 'login':
@@ -604,9 +69,6 @@ class FarmaFollowApp {
       case 'reminders':
         this.renderReminders(app);
         break;
-      case 'my-consultations':
-        this.renderMyConsultations(app);
-        break;
       case 'consult':
         this.renderConsult(app);
         break;
@@ -615,17 +77,6 @@ class FarmaFollowApp {
         break;
       default:
         this.renderLogin(app);
-    }
-  }
-
-  goBack() {
-    if (this.currentScreen === 'medication' || 
-        this.currentScreen === 'reminders' || 
-        this.currentScreen === 'consult' ||
-        this.currentScreen === 'my-consultations') {
-      this.showScreen('dashboard');
-    } else {
-      this.showScreen('dashboard');
     }
   }
 
@@ -638,24 +89,24 @@ class FarmaFollowApp {
             <p>Seguimiento Farmacoterapéutico</p>
           </div>
           
-          <form id="loginForm">
+          <form id="loginForm" class="auth-form">
             <div class="form-group">
-              <label class="form-label">Email</label>
-              <input type="email" id="email" class="form-input" required>
+              <label for="email">Email</label>
+              <input type="email" id="email" required>
             </div>
             
             <div class="form-group">
-              <label class="form-label">Contraseña</label>
-              <input type="password" id="password" class="form-input" required>
+              <label for="password">Contraseña</label>
+              <input type="password" id="password" required>
             </div>
             
-            <button type="submit" class="btn btn-primary btn-block btn-lg">
+            <button type="submit" class="btn btn-primary btn-block">
               Iniciar Sesión
             </button>
           </form>
           
-          <div class="auth-toggle">
-            ¿Primera vez? <a class="auth-toggle-link" onclick="app.showScreen('register')">Regístrate aquí</a>
+          <div class="auth-footer">
+            <p>¿Primera vez? <a href="#" onclick="app.showScreen('register')">Registrarse</a></p>
           </div>
         </div>
       </div>
@@ -670,32 +121,32 @@ class FarmaFollowApp {
         <div class="auth-card">
           <div class="auth-header">
             <h1>💊 FarmaFollow</h1>
-            <p>Crear Cuenta Nueva</p>
+            <p>Crear Cuenta</p>
           </div>
           
-          <form id="registerForm">
+          <form id="registerForm" class="auth-form">
             <div class="form-group">
-              <label class="form-label">Nombre Completo</label>
-              <input type="text" id="name" class="form-input" required>
+              <label for="name">Nombre Completo</label>
+              <input type="text" id="name" required>
             </div>
             
             <div class="form-group">
-              <label class="form-label">Email</label>
-              <input type="email" id="email" class="form-input" required>
+              <label for="email">Email</label>
+              <input type="email" id="email" required>
             </div>
             
             <div class="form-group">
-              <label class="form-label">Contraseña (mínimo 6 caracteres)</label>
-              <input type="password" id="password" class="form-input" required minlength="6">
+              <label for="password">Contraseña (mínimo 6 caracteres)</label>
+              <input type="password" id="password" required minlength="6">
             </div>
             
-            <button type="submit" class="btn btn-primary btn-block btn-lg">
-              Crear Cuenta
+            <button type="submit" class="btn btn-primary btn-block">
+              Registrarse
             </button>
           </form>
           
-          <div class="auth-toggle">
-            ¿Ya tienes cuenta? <a class="auth-toggle-link" onclick="app.showScreen('login')">Inicia sesión</a>
+          <div class="auth-footer">
+            <p>¿Ya tienes cuenta? <a href="#" onclick="app.showScreen('login')">Iniciar Sesión</a></p>
           </div>
         </div>
       </div>
@@ -717,7 +168,6 @@ class FarmaFollowApp {
         this.showScreen('admin-dashboard');
       } else {
         this.showScreen('dashboard');
-        this.startReminderChecker();
       }
     } catch (error) {
       this.showMessage('Error: ' + error.message, 'error');
@@ -739,6 +189,7 @@ class FarmaFollowApp {
     }
   }
 
+  // PANEL DE PACIENTE
   async renderPatientDashboard(container) {
     try {
       const [medications, reminders] = await Promise.all([
@@ -749,39 +200,55 @@ class FarmaFollowApp {
       this.medications = medications;
       this.reminders = reminders;
 
-      // CALCULAR DATOS REALES
-      const adherence = await this.calculateAdherence();
-      const streak = await this.calculateStreak();
-      const nextDose = this.getNextReminder(reminders);
-
-      const today = new Date();
-      const dayNames = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
-      const monthNames = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
-      const dateStr = `${dayNames[today.getDay()]}, ${today.getDate()} de ${monthNames[today.getMonth()]} de ${today.getFullYear()}`;
+      const adherence = this.user.adherenceRate || 100;
 
       container.innerHTML = `
-        <div class="dashboard-header">
-          <div class="greeting">¡Hola, ${this.user.name}! 👋</div>
-          <div class="date-text">${dateStr}</div>
-        </div>
+        <div class="dashboard">
+          <div class="dashboard-header">
+            <h1>Hola, ${this.user.name} 👋</h1>
+            <button class="btn btn-secondary" onclick="app.logout()">
+              Cerrar Sesión
+            </button>
+          </div>
 
-        <div class="stats-card">
-          <div class="adherence-circle">
-            <div class="percentage">${adherence}%</div>
-            <div class="label">Adherencia</div>
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-icon">💊</div>
+              <div class="stat-content">
+                <h3>${medications.length}</h3>
+                <p>Medicamentos</p>
+              </div>
+            </div>
+            
+            <div class="stat-card">
+              <div class="stat-icon">📊</div>
+              <div class="stat-content">
+                <h3>${adherence}%</h3>
+                <p>Adherencia</p>
+              </div>
+            </div>
+            
+            <div class="stat-card">
+              <div class="stat-icon">🔔</div>
+              <div class="stat-content">
+                <h3>${reminders.filter(r => r.isActive).length}</h3>
+                <p>Recordatorios</p>
+              </div>
+            </div>
           </div>
-          <div class="stat-row">
-            <span class="stat-label">📅 Próxima dosis</span>
-            <span class="stat-value">${nextDose}</span>
-          </div>
-          <div class="stat-row">
-            <span class="stat-label">🔥 Racha actual</span>
-            <span class="stat-value">${streak} días</span>
+
+          <div id="medicationsContainer" class="medications-container"></div>
+          
+          <div class="card" style="margin-top: 2rem;">
+            <h3>💬 Mis Consultas</h3>
+            <div id="patientConsultations" class="consultations-list">
+              <div class="loading">Cargando consultas...</div>
+            </div>
+            <button class="btn btn-primary" onclick="app.showScreen('consult')">
+              📝 Nueva Consulta
+            </button>
           </div>
         </div>
-
-        <div class="section-title">💊 Tu Medicamento</div>
-        <div class="medications-list" id="medicationsContainer"></div>
       `;
 
       const medicationsContainer = document.getElementById('medicationsContainer');
@@ -789,26 +256,36 @@ class FarmaFollowApp {
       if (medications.length === 0) {
         medicationsContainer.innerHTML = `
           <div class="empty-state">
-            <p>No tienes medicamentos asignados</p>
-            <p style="font-size: 0.9rem; color: var(--gray-600);">Tu farmacéutico te asignará un medicamento pronto</p>
+            <p>📭 Sin medicamento asignado</p>
+            <p style="color: var(--text-secondary);">Tu farmacéutico te asignará un medicamento pronto.</p>
           </div>
         `;
       } else {
         medications.forEach(med => {
           const card = document.createElement('div');
           card.className = 'medication-card';
-          card.onclick = () => this.showMedicationDetail(med._id);
           card.innerHTML = `
-            <div class="medication-icon">💊</div>
-            <div class="medication-info">
-              <div class="medication-name">${med.name}</div>
-              <div class="medication-description">${med.description}</div>
+            <div class="medication-header">
+              <h3>${med.name}</h3>
             </div>
-            <div class="medication-arrow">→</div>
+            <p class="medication-description">${med.description}</p>
+            <div class="medication-actions">
+              <button class="btn btn-primary" onclick="app.showMedicationDetail('${med._id}')">
+                Ver Detalles
+              </button>
+              <button class="btn btn-secondary" onclick="app.showScreen('reminders')">
+                Recordatorios
+              </button>
+              <button class="btn btn-secondary" onclick="app.showScreen('consult')">
+                Consultar
+              </button>
+            </div>
           `;
           medicationsContainer.appendChild(card);
         });
       }
+
+      this.loadConsultations();
 
     } catch (error) {
       logger.error('Error cargando dashboard:', error);
@@ -829,476 +306,908 @@ class FarmaFollowApp {
     }
 
     container.innerHTML = `
-      <div class="medication-detail-header">
-        <div class="medication-detail-icon">💊</div>
-        <div class="medication-detail-name">${med.name}</div>
-        <div class="medication-detail-desc">${med.description}</div>
-      </div>
-
-      <div class="options-grid">
-        <div class="option-card" onclick="app.showMedicationVideo()">
-          <div class="option-icon video">🎥</div>
-          <div class="option-title">Video</div>
-          <div class="option-description">Cómo administrar</div>
+      <div class="medication-detail">
+        <div class="detail-header">
+          <button class="btn btn-secondary" onclick="app.showScreen('dashboard')">
+            ← Volver
+          </button>
+          <h1>${med.name}</h1>
         </div>
 
-        <div class="option-card" onclick="app.showFAQ()">
-          <div class="option-icon faq">❓</div>
-          <div class="option-title">FAQ</div>
-          <div class="option-description">Preguntas comunes</div>
-        </div>
+        <div class="detail-content">
+          <section class="detail-section">
+            <h2>📝 Descripción</h2>
+            <p>${med.description}</p>
+          </section>
 
-        <div class="option-card" onclick="app.showScreen('reminders')">
-          <div class="option-icon reminder">⏰</div>
-          <div class="option-title">Recordatorios</div>
-          <div class="option-description">Configura alertas</div>
-        </div>
-
-        <div class="option-card" onclick="app.showScreen('consult')">
-          <div class="option-icon consult">💬</div>
-          <div class="option-title">Consulta</div>
-          <div class="option-description">Habla con farmacia</div>
-        </div>
-      </div>
-    `;
-  }
-
-  showMedicationVideo() {
-    const med = this.currentMedication;
-    if (!med || !med.videoUrl) {
-      this.showMessage('No hay video disponible para este medicamento', 'info');
-      return;
-    }
-
-    const modal = document.createElement('div');
-    modal.className = 'modal active';
-    modal.innerHTML = `
-      <div class="modal-content" style="max-width: 800px;">
-        <div class="modal-header">
-          <h2>Video de Administración</h2>
-          <button class="close-btn" onclick="this.closest('.modal').remove()">×</button>
-        </div>
-        <div style="position: relative; padding-bottom: 56.25%; height: 0;">
-          <iframe 
-            src="${med.videoUrl}" 
-            style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: none; border-radius: 0.5rem;"
-            allowfullscreen>
-          </iframe>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(modal);
-  }
-
-  showFAQ() {
-    const med = this.currentMedication;
-    if (!med) return;
-
-    const faqs = med.faqs || [
-      { question: "¿Puedo tomar este medicamento con comida?", answer: "Sí, se recomienda tomar con alimentos para reducir efectos secundarios gastrointestinales.", tag: "💊 Administración" },
-      { question: "¿Qué hago si olvido una dosis?", answer: "Si olvidas una dosis, tómala tan pronto como lo recuerdes. Si ya es casi la hora de la siguiente dosis, sáltala y continúa con tu horario regular.", tag: "⏰ Dosis olvidada" },
-      { question: "¿Cuáles son los efectos secundarios más comunes?", answer: "Los efectos secundarios más comunes incluyen enrojecimiento facial, malestar estomacal y diarrea. Estos síntomas suelen mejorar con el tiempo.", tag: "⚕️ Efectos secundarios" },
-      { question: "¿Puedo beber alcohol mientras tomo este medicamento?", answer: "El consumo moderado de alcohol generalmente es seguro, pero puede aumentar algunos efectos secundarios. Consulta con tu médico.", tag: "🍷 Interacciones" },
-      { question: "¿Cuándo debo contactar al farmacéutico?", answer: "Contacta inmediatamente si experimentas: reacciones alérgicas graves, infecciones recurrentes, problemas hepáticos o cualquier síntoma que te preocupe.", tag: "🚨 Urgente" }
-    ];
-
-    const modal = document.createElement('div');
-    modal.className = 'modal active';
-    modal.innerHTML = `
-      <div class="modal-content" style="max-width: 700px;">
-        <div class="modal-header">
-          <h2>❓ Preguntas Frecuentes</h2>
-          <button class="close-btn" onclick="this.closest('.modal').remove()">×</button>
-        </div>
-        
-        <div class="faq-container">
-          <div class="faq-list">
-            ${faqs.map((faq, index) => `
-              <div class="faq-item" data-index="${index}">
-                <div class="faq-question" onclick="app.toggleFAQ(this)">
-                  <div class="faq-q-content">
-                    <div class="faq-icon">❓</div>
-                    <div class="faq-q-text">${faq.question}</div>
-                  </div>
-                  <div class="faq-toggle">+</div>
-                </div>
-                <div class="faq-answer">
-                  ${faq.answer}
-                  ${faq.tag ? `<div class="faq-tag">${faq.tag}</div>` : ''}
-                </div>
+          ${med.videoUrl ? `
+            <section class="detail-section">
+              <h2>🎥 Video de Administración</h2>
+              <div class="video-container">
+                <iframe 
+                  src="${med.videoUrl}" 
+                  frameborder="0" 
+                  allowfullscreen>
+                </iframe>
               </div>
-            `).join('')}
-          </div>
+            </section>
+          ` : ''}
+
+          ${med.faqs && med.faqs.length > 0 ? `
+            <section class="detail-section">
+              <h2>❓ Preguntas Frecuentes</h2>
+              <div class="faqs">
+                ${med.faqs.map(faq => `
+                  <div class="faq-item">
+                    <h3>${faq.question}</h3>
+                    <p>${faq.answer}</p>
+                  </div>
+                `).join('')}
+              </div>
+            </section>
+          ` : ''}
+
+          <section class="detail-section">
+            <h2>💬 ¿Tienes dudas?</h2>
+            <button class="btn btn-primary" onclick="app.showScreen('consult')">
+              Consultar al Farmacéutico
+            </button>
+          </section>
         </div>
       </div>
     `;
-    document.body.appendChild(modal);
   }
 
-  toggleFAQ(element) {
-    const faqItem = element.closest('.faq-item');
-    const wasExpanded = faqItem.classList.contains('expanded');
-    
-    // Cerrar todas las FAQ
-    document.querySelectorAll('.faq-item').forEach(item => {
-      item.classList.remove('expanded');
-    });
-    
-    // Si no estaba expandida, expandirla
-    if (!wasExpanded) {
-      faqItem.classList.add('expanded');
-    }
+  renderReminders(container) {
+    container.innerHTML = `
+      <div class="reminders-screen">
+        <div class="screen-header">
+          <button class="btn btn-secondary" onclick="app.showScreen('dashboard')">
+            ← Volver
+          </button>
+          <h1>🔔 Recordatorios</h1>
+        </div>
+
+        <div id="remindersList" class="reminders-list"></div>
+      </div>
+    `;
+
+    this.renderRemindersList();
   }
 
-  async renderReminders(container) {
-    // Cargar recordatorios actuales del usuario
+  async renderRemindersList() {
+    const container = document.getElementById('remindersList');
+    if (!container) return;
+
     try {
       this.reminders = await api.getReminders();
-    } catch (error) {
-      logger.error('Error cargando recordatorios:', error);
-      this.reminders = [];
-    }
-    
-    const now = new Date();
-    const monthNames = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
-    const currentMonthName = monthNames[now.getMonth()] + ' ' + now.getFullYear();
-    
-    container.innerHTML = `
-      <div class="calendar-container">
-        <div class="calendar-header">
-          <div class="calendar-title">Configura tus horarios</div>
-          <div class="calendar-subtitle">Selecciona los días y horas para tus recordatorios</div>
-        </div>
 
-        <div class="calendar-month">
-          <div class="month-header">
-            <div class="month-name">${currentMonthName}</div>
-            <div class="month-nav">
-              <button class="nav-btn" onclick="app.previousMonth()">←</button>
-              <button class="nav-btn" onclick="app.nextMonth()">→</button>
-            </div>
+      if (this.reminders.length === 0) {
+        container.innerHTML = '<div class="empty-state">No tienes recordatorios configurados</div>';
+        return;
+      }
+
+      container.innerHTML = this.reminders.map(reminder => `
+        <div class="reminder-card ${reminder.isActive ? 'active' : 'inactive'}">
+          <div class="reminder-info">
+            <h3>${reminder.medication?.name || 'Medicamento'}</h3>
+            <p>🕐 ${reminder.time}</p>
+            <p>📅 ${this.getFrequencyText(reminder.frequency)}</p>
           </div>
-          <div class="calendar-grid">
-            <div class="day-header">DOM</div>
-            <div class="day-header">LUN</div>
-            <div class="day-header">MAR</div>
-            <div class="day-header">MIÉ</div>
-            <div class="day-header">JUE</div>
-            <div class="day-header">VIE</div>
-            <div class="day-header">SÁB</div>
-            
-            ${this.generateCalendarDays()}
-          </div>
-        </div>
-
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-top: 1.5rem;">
-          <div>
-            <div class="section-title" style="font-size: 1.1rem; margin-bottom: 1rem;">⏰ Horarios del día</div>
-            <div class="time-grid">
-              <div class="time-slot" data-time="08:00" onclick="app.toggleTimeSlot(this)">
-                <div class="time-emoji">🌅</div>
-                <div class="time-label">Mañana</div>
-                <div class="time-value">08:00</div>
-              </div>
-
-              <div class="time-slot" data-time="14:00" onclick="app.toggleTimeSlot(this)">
-                <div class="time-emoji">☀️</div>
-                <div class="time-label">Mediodía</div>
-                <div class="time-value">14:00</div>
-              </div>
-
-              <div class="time-slot" data-time="21:00" onclick="app.toggleTimeSlot(this)">
-                <div class="time-emoji">🌙</div>
-                <div class="time-label">Noche</div>
-                <div class="time-value">21:00</div>
-              </div>
-            </div>
-          </div>
-
-          <div>
-            <div class="frequency-section">
-              <div class="frequency-title">📅 Frecuencia de administración</div>
-              <div class="frequency-options">
-                <div class="frequency-btn" data-freq="daily" onclick="app.selectFrequency(this)">📆 Diaria</div>
-                <div class="frequency-btn active" data-freq="weekly" onclick="app.selectFrequency(this)">📅 Semanal</div>
-                <div class="frequency-btn" data-freq="biweekly" onclick="app.selectFrequency(this)">🗓️ Cada 2 semanas</div>
-                <div class="frequency-btn" data-freq="monthly" onclick="app.selectFrequency(this)">📋 Cada 28 días</div>
-              </div>
-            </div>
-
-            <button class="btn btn-success btn-block btn-lg" onclick="app.saveReminders()">
-              💾 Guardar Recordatorios
+          <div class="reminder-actions">
+            <button 
+              class="btn ${reminder.isActive ? 'btn-secondary' : 'btn-primary'}" 
+              onclick="app.toggleReminder('${reminder._id}')">
+              ${reminder.isActive ? 'Desactivar' : 'Activar'}
             </button>
           </div>
         </div>
-      </div>
-    `;
-
-    // Resetear selecciones
-    this.selectedTimes = [];
-    this.selectedFrequency = 'weekly';
-  }
-
-  toggleTimeSlot(element) {
-    element.classList.toggle('active');
-    const time = element.dataset.time;
-    
-    if (element.classList.contains('active')) {
-      if (!this.selectedTimes.includes(time)) {
-        this.selectedTimes.push(time);
-      }
-    } else {
-      this.selectedTimes = this.selectedTimes.filter(t => t !== time);
-    }
-  }
-
-  selectFrequency(element) {
-    document.querySelectorAll('.frequency-btn').forEach(btn => btn.classList.remove('active'));
-    element.classList.add('active');
-    this.selectedFrequency = element.dataset.freq;
-  }
-
-  generateCalendarDays() {
-    const now = new Date();
-    const currentYear = now.getFullYear();
-    const currentMonth = now.getMonth(); // 0-11
-    const today = now.getDate();
-    
-    // Obtener primer y último día del mes
-    const firstDay = new Date(currentYear, currentMonth, 1);
-    const lastDay = new Date(currentYear, currentMonth + 1, 0);
-    
-    // Días del mes anterior para llenar la primera semana
-    const firstDayOfWeek = firstDay.getDay(); // 0 = Domingo
-    const daysFromPrevMonth = firstDayOfWeek === 0 ? 0 : firstDayOfWeek;
-    
-    // Calcular días del mes anterior
-    const prevMonthLastDay = new Date(currentYear, currentMonth, 0).getDate();
-    
-    let html = '';
-    
-    // Días del mes anterior
-    for (let i = daysFromPrevMonth - 1; i >= 0; i--) {
-      const day = prevMonthLastDay - i;
-      html += `<div class="day-cell other-month"><div class="day-number">${day}</div></div>`;
-    }
-    
-    // Días del mes actual
-    const daysInMonth = lastDay.getDate();
-    
-    for (let day = 1; day <= daysInMonth; day++) {
-      const date = new Date(currentYear, currentMonth, day);
-      const dayOfWeek = date.getDay(); // 0 = Domingo, 1 = Lunes, etc.
-      
-      // Verificar si este día tiene recordatorios
-      const hasReminder = this.checkIfDayHasReminder(dayOfWeek, date);
-      
-      let classes = 'day-cell';
-      
-      // Marcar día actual
-      if (day === today && currentMonth === now.getMonth() && currentYear === now.getFullYear()) {
-        classes += ' today';
-      }
-      
-      // Marcar días con recordatorio
-      if (hasReminder) {
-        classes += ' has-reminder';
-      }
-      
-      html += `<div class="${classes}"><div class="day-number">${day}</div></div>`;
-    }
-    
-    // Días del próximo mes para completar la última semana
-    const lastDayOfWeek = lastDay.getDay();
-    const daysToNextMonth = lastDayOfWeek === 6 ? 0 : (6 - lastDayOfWeek);
-    
-    for (let i = 1; i <= daysToNextMonth; i++) {
-      html += `<div class="day-cell other-month"><div class="day-number">${i}</div></div>`;
-    }
-    
-    return html;
-  }
-
-  checkIfDayHasReminder(dayOfWeek, date) {
-    if (!this.reminders || this.reminders.length === 0) {
-      return false;
-    }
-    
-    const now = new Date();
-    now.setHours(0, 0, 0, 0);
-    
-    // Solo marcar días pasados o hoy
-    date.setHours(0, 0, 0, 0);
-    if (date > now) {
-      return false; // Días futuros no se marcan
-    }
-    
-    // Verificar si hay recordatorios activos para este día
-    return this.reminders.some(reminder => {
-      if (!reminder.isActive) return false;
-      
-      switch (reminder.frequency) {
-        case 'daily':
-          // Todos los días
-          return true;
-          
-        case 'weekly':
-          // Solo los días especificados en daysOfWeek
-          if (reminder.daysOfWeek && reminder.daysOfWeek.length > 0) {
-            return reminder.daysOfWeek.includes(dayOfWeek);
-          }
-          // Si no tiene daysOfWeek, asumir Lun-Vie
-          return [1, 2, 3, 4, 5].includes(dayOfWeek);
-          
-        case 'biweekly':
-          // Cada 2 semanas - verificar si han pasado 14 días desde creación
-          const reminderStart = new Date(reminder.createdAt);
-          reminderStart.setHours(0, 0, 0, 0);
-          const daysDiff = Math.floor((date - reminderStart) / (1000 * 60 * 60 * 24));
-          return daysDiff % 14 === 0;
-          
-        case 'monthly':
-          // Cada 28 días
-          const monthlyStart = new Date(reminder.createdAt);
-          monthlyStart.setHours(0, 0, 0, 0);
-          const daysDiffMonthly = Math.floor((date - monthlyStart) / (1000 * 60 * 60 * 24));
-          return daysDiffMonthly % 28 === 0;
-          
-        default:
-          return false;
-      }
-    });
-  }
-
-  async saveReminders() {
-    if (this.selectedTimes.length === 0) {
-      this.showMessage('Por favor selecciona al menos un horario', 'warning');
-      return;
-    }
-
-    if (!this.currentMedication) {
-      this.showMessage('Error: No hay medicamento seleccionado', 'error');
-      return;
-    }
-
-    try {
-      // Crear un recordatorio por cada horario seleccionado
-      for (const time of this.selectedTimes) {
-        await api.createReminder({
-          medication: this.currentMedication._id,
-          time: time,
-          frequency: this.selectedFrequency,
-          isActive: true,
-          daysOfWeek: this.selectedFrequency === 'weekly' ? [1, 2, 3, 4, 5] : undefined // Lun-Vie por defecto
-        });
-      }
-
-      this.showMessage('✅ Recordatorios guardados correctamente', 'success');
-      setTimeout(() => this.showScreen('dashboard'), 1500);
+      `).join('');
     } catch (error) {
-      logger.error('Error guardando recordatorios:', error);
-      this.showMessage('Error guardando recordatorios: ' + error.message, 'error');
+      container.innerHTML = '<div class="error">Error cargando recordatorios</div>';
     }
   }
 
-  previousMonth() {
-    this.showMessage('Navegación de meses próximamente', 'info');
+  getFrequencyText(frequency) {
+    const frequencies = {
+      'daily': 'Todos los días',
+      'weekly': 'Semanal',
+      'custom': 'Personalizado'
+    };
+    return frequencies[frequency] || frequency;
   }
 
-  nextMonth() {
-    this.showMessage('Navegación de meses próximamente', 'info');
+  async toggleReminder(reminderId) {
+    try {
+      const reminder = this.reminders.find(r => r._id === reminderId);
+      await api.updateReminder(reminderId, { isActive: !reminder.isActive });
+      await this.renderRemindersList();
+      this.showMessage('Recordatorio actualizado', 'success');
+    } catch (error) {
+      this.showMessage('Error actualizando recordatorio', 'error');
+    }
   }
 
   renderConsult(container) {
     container.innerHTML = `
-      <div class="consult-container">
-        <div class="consult-header">
-          <div class="consult-title">Envía tu Consulta</div>
-          <div class="consult-subtitle">Te responderemos a la mayor brevedad</div>
+      <div class="consult-screen">
+        <div class="screen-header">
+          <button class="btn btn-secondary" onclick="app.showScreen('dashboard')">
+            ← Volver
+          </button>
+          <h1>💬 Consultar al Farmacéutico</h1>
         </div>
 
-        <div class="response-time-badge">
-          ⏱️ Tiempo de respuesta: 24 horas
-        </div>
-
-        <div class="chat-container" id="chatContainer">
-          <div class="chat-message pharmacist">
-            <div class="chat-avatar">👨‍⚕️</div>
-            <div>
-              <div class="chat-bubble">
-                ¡Hola! Soy tu farmacéutico. ¿En qué puedo ayudarte hoy con tu tratamiento?
-              </div>
-              <div class="chat-time">Ayer, 10:30 AM</div>
-            </div>
+        <form id="consultForm" class="consult-form">
+          <div class="form-group">
+            <label for="consultSubject">Asunto</label>
+            <select id="consultSubject" required>
+              <option value="">Selecciona un asunto</option>
+              <option value="dosificacion">Dosis y Administración</option>
+              <option value="efectos-secundarios">Efectos Secundarios</option>
+              <option value="interacciones">Interacciones</option>
+              <option value="almacenamiento">Almacenamiento</option>
+              <option value="otros">Otros</option>
+            </select>
           </div>
-        </div>
 
-        <div class="chat-input-container">
-          <input type="text" class="chat-input" id="chatInput" placeholder="Escribe tu consulta aquí...">
-          <button class="chat-send-btn" onclick="app.sendConsultation()">📤</button>
-        </div>
+          <div class="form-group">
+            <label for="consultMessage">Mensaje *</label>
+            <textarea id="consultMessage" rows="6" required 
+              placeholder="Describe tu consulta..."></textarea>
+          </div>
+
+          <div class="form-group">
+            <label for="consultContact">Teléfono de Contacto (opcional)</label>
+            <input type="tel" id="consultContact" placeholder="123456789">
+          </div>
+
+          <button type="submit" class="btn btn-primary">
+            Enviar Consulta
+          </button>
+        </form>
       </div>
     `;
 
-    document.getElementById('chatInput').addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') {
-        this.sendConsultation();
-      }
+    document.getElementById('consultForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      this.sendConsult();
     });
   }
 
-  async sendConsultation() {
-    const input = document.getElementById('chatInput');
-    const message = input.value.trim();
-
-    if (!message) return;
-
-    const chatContainer = document.getElementById('chatContainer');
-    const now = new Date();
-    const timeStr = now.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
-
-    const messageDiv = document.createElement('div');
-    messageDiv.className = 'chat-message user';
-    messageDiv.innerHTML = `
-      <div class="chat-avatar">👤</div>
-      <div>
-        <div class="chat-bubble">${message}</div>
-        <div class="chat-time">Hoy, ${timeStr}</div>
-      </div>
-    `;
-    chatContainer.appendChild(messageDiv);
-    chatContainer.scrollTop = chatContainer.scrollHeight;
-
-    input.value = '';
-
+  async sendConsult() {
+    const subject = document.getElementById('consultSubject').value;
+    const message = document.getElementById('consultMessage').value.trim();
+    const contact = document.getElementById('consultContact').value.trim();
+    
+    if (!subject || !message) {
+      this.showMessage('Por favor completa los campos obligatorios', 'error');
+      return;
+    }
+    
+    const submitBtn = document.querySelector('.btn-primary');
+    const originalText = submitBtn.textContent;
+    submitBtn.textContent = '⏳ Enviando...';
+    submitBtn.disabled = true;
+    
     try {
       await api.createConsultation({
-        medication: this.currentMedication?._id,
-        message: message
+        subject,
+        message,
+        contact,
+        urgency: subject === 'efectos-secundarios' ? 'high' : 'medium'
       });
-      this.showMessage('✅ Consulta enviada correctamente', 'success');
+      
+      this.showMessage('✅ ¡Consulta enviada correctamente! Puedes verla en "Mis Consultas". Te responderemos pronto.', 'success');
+      
+      setTimeout(() => {
+        this.showScreen('dashboard');
+        this.loadConsultations();
+      }, 3000);
     } catch (error) {
-      logger.error('Error enviando consulta:', error);
-      this.showMessage('Error enviando consulta: ' + error.message, 'error');
+      submitBtn.textContent = originalText;
+      submitBtn.disabled = false;
+      this.showMessage('❌ Error al enviar consulta: ' + error.message, 'error');
     }
   }
 
-  renderMyConsultations(container) {
-    container.innerHTML = `
-      <div class="consult-container">
-        <h2>Mis Consultas</h2>
-        <div class="empty-state">
-          No tienes consultas previas
+  async loadConsultations() {
+    const container = document.getElementById('patientConsultations');
+    if (!container) return;
+    
+    try {
+      const consultations = await api.getConsultations();
+      
+      if (consultations.length === 0) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <p>📭 No tienes consultas todavía</p>
+            <p style="color: var(--text-secondary); font-size: 0.9rem;">
+              Haz una consulta al farmacéutico usando el botón de abajo
+            </p>
+          </div>
+        `;
+        return;
+      }
+      
+      container.innerHTML = consultations.map(consult => `
+        <div class="consultation-item ${consult.status === 'resolved' ? 'resolved' : 'pending'}">
+          <div class="consultation-header">
+            <div>
+              <strong>${this.getSubjectText(consult.subject)}</strong>
+              <span class="consultation-date">${new Date(consult.createdAt).toLocaleDateString('es-ES')}</span>
+            </div>
+            <span class="badge ${consult.status === 'resolved' ? 'badge-success' : 'badge-warning'}">
+              ${consult.status === 'resolved' ? '✅ Respondida' : '⏳ Pendiente'}
+            </span>
+          </div>
+          
+          <div class="consultation-message">
+            <p><strong>Tu consulta:</strong></p>
+            <p>${consult.message}</p>
+          </div>
+          
+          ${consult.response ? `
+            <div class="consultation-response">
+              <p><strong>💊 Respuesta del Farmacéutico:</strong></p>
+              <p>${consult.response}</p>
+              <small style="color: var(--text-secondary);">
+                Respondido el ${new Date(consult.respondedAt).toLocaleDateString('es-ES')}
+              </small>
+            </div>
+          ` : `
+            <div class="consultation-pending">
+              <p>⏳ Aún no hay respuesta. Te notificaremos cuando el farmacéutico responda.</p>
+            </div>
+          `}
         </div>
+      `).join('');
+      
+    } catch (error) {
+      container.innerHTML = `
+        <div class="error-state">
+          <p>❌ Error al cargar consultas</p>
+          <button class="btn btn-secondary" onclick="app.loadConsultations()">
+            Reintentar
+          </button>
+        </div>
+      `;
+    }
+  }
+
+  getSubjectText(subject) {
+    const subjects = {
+      'dosificacion': '💊 Dosis y Administración',
+      'efectos-secundarios': '⚠️ Efectos Secundarios',
+      'interacciones': '🔄 Interacciones',
+      'almacenamiento': '📦 Almacenamiento',
+      'otros': '❓ Otra Consulta'
+    };
+    return subjects[subject] || subject;
+  }
+
+  showReminderModal(reminder) {
+    this.activeReminder = reminder;
+    
+    const modal = document.createElement('div');
+    modal.className = 'modal active';
+    modal.innerHTML = `
+      <div class="modal-content">
+        <h2>🔔 Recordatorio de Medicación</h2>
+        <div class="reminder-modal-body">
+          <p class="medication-name">${reminder.medication?.name}</p>
+          <p class="reminder-time">Es hora de tomar tu medicación</p>
+          <p class="reminder-notes">${reminder.notes || ''}</p>
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-primary" onclick="app.confirmDose(true)">
+            ✓ Tomado
+          </button>
+          <button class="btn btn-secondary" onclick="app.confirmDose(false)">
+            ✗ Posponer
+          </button>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(modal);
+  }
+
+  async confirmDose(taken) {
+    const modal = document.querySelector('.modal');
+    if (modal) modal.remove();
+
+    if (this.activeReminder && taken) {
+      try {
+        await api.recordDose(this.activeReminder._id, taken);
+        this.showMessage('Dosis registrada correctamente', 'success');
+      } catch (error) {
+        logger.error('Error registrando dosis:', error);
+      }
+    }
+
+    this.activeReminder = null;
+  }
+
+  // ===== PANEL DE ADMINISTRADOR =====
+
+  async renderAdminDashboard(container) {
+    try {
+      container.innerHTML = `
+        <div class="admin-dashboard">
+          <div class="admin-header">
+            <h1>Panel de Administración 👨‍⚕️</h1>
+            <button class="btn btn-secondary" onclick="app.logout()">
+              Cerrar Sesión
+            </button>
+          </div>
+
+          <div class="admin-nav">
+            <button class="nav-btn active" data-section="analytics">
+              📊 Analytics
+            </button>
+            <button class="nav-btn" data-section="patients">
+              👥 Pacientes
+            </button>
+            <button class="nav-btn" data-section="medications">
+              💊 Medicamentos
+            </button>
+            <button class="nav-btn" data-section="consultations">
+              💬 Consultas
+            </button>
+          </div>
+
+          <div id="adminContent" class="admin-content"></div>
+        </div>
+      `;
+
+      // Setup nav buttons
+      document.querySelectorAll('.nav-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+          e.target.classList.add('active');
+          this.showAdminSection(e.target.dataset.section);
+        });
+      });
+
+      this.showAdminSection('analytics');
+    } catch (error) {
+      logger.error('Error cargando panel admin:', error);
+      container.innerHTML = '<div class="error">Error cargando panel de administración</div>';
+    }
+  }
+
+  async showAdminSection(section) {
+    const container = document.getElementById('adminContent');
+    if (!container) return;
+
+    container.innerHTML = '<div class="loading">Cargando...</div>';
+
+    switch (section) {
+      case 'analytics':
+        await this.renderAnalytics(container);
+        break;
+      case 'patients':
+        await this.renderPatients(container);
+        break;
+      case 'medications':
+        await this.renderMedications(container);
+        break;
+      case 'consultations':
+        await this.renderConsultations(container);
+        break;
+    }
+  }
+
+  async renderAnalytics(container) {
+    try {
+      const analytics = await api.getAnalytics();
+
+      const m = analytics.generalMetrics;
+
+      container.innerHTML = `
+        <div class="analytics-section">
+          <h2>📊 Estadísticas Generales</h2>
+          
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-icon">👥</div>
+              <div class="stat-content">
+                <h3>${m.totalPatients || 0}</h3>
+                <p>Pacientes Totales</p>
+              </div>
+            </div>
+            
+            <div class="stat-card">
+              <div class="stat-icon">💊</div>
+              <div class="stat-content">
+                <h3>${m.totalMedications || 0}</h3>
+                <p>Medicamentos</p>
+              </div>
+            </div>
+            
+            <div class="stat-card">
+              <div class="stat-icon">📊</div>
+              <div class="stat-content">
+                <h3>${m.averageAdherence || 0}%</h3>
+                <p>Adherencia Promedio</p>
+              </div>
+            </div>
+            
+            <div class="stat-card">
+              <div class="stat-icon">💬</div>
+              <div class="stat-content">
+                <h3>${m.pendingConsultations || 0}</h3>
+                <p>Consultas Pendientes</p>
+              </div>
+            </div>
+
+            <div class="stat-card">
+              <div class="stat-icon">⚠️</div>
+              <div class="stat-content">
+                <h3>${m.unresolvedAdverseEvents || 0}</h3>
+                <p>Eventos Adversos</p>
+              </div>
+            </div>
+          </div>
+
+          ${analytics.alerts && analytics.alerts.length > 0 ? `
+            <div class="alerts-section" style="margin-top: 2rem;">
+              <h3>⚠️ Alertas</h3>
+              <div class="alerts-list">
+                ${analytics.alerts.map(alert => `
+                  <div class="alert alert-${alert.type}">
+                    ${alert.message}
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
+        </div>
+      `;
+    } catch (error) {
+      container.innerHTML = '<div class="error">Error cargando analytics</div>';
+    }
+  }
+
+  async renderPatients(container) {
+    try {
+      container.innerHTML = `
+        <div class="patients-section">
+          <h2>👥 Gestión de Pacientes</h2>
+          
+          <div class="filters-bar">
+            <input type="text" id="searchPatients" placeholder="🔍 Buscar por nombre o email..." class="search-input">
+            <select id="filterMedication" class="filter-select">
+              <option value="">Todos los medicamentos</option>
+            </select>
+            <select id="filterDisease" class="filter-select">
+              <option value="">Todas las enfermedades</option>
+            </select>
+            <select id="filterAdherence" class="filter-select">
+              <option value="">Toda adherencia</option>
+              <option value="70-100">Buena (70-100%)</option>
+              <option value="0-70">Baja (<70%)</option>
+            </select>
+          </div>
+
+          <div id="patientsTable"></div>
+        </div>
+      `;
+
+      // Cargar datos
+      const [users, medications] = await Promise.all([
+        api.getUsers(),
+        api.getMedications()
+      ]);
+
+      // Poblar filtros
+      const medicationFilter = document.getElementById('filterMedication');
+      medications.forEach(med => {
+        const option = document.createElement('option');
+        option.value = med._id;
+        option.textContent = med.name;
+        medicationFilter.appendChild(option);
+      });
+
+      const diseases = [...new Set(users.flatMap(u => u.diseases || []))];
+      const diseaseFilter = document.getElementById('filterDisease');
+      diseases.forEach(disease => {
+        const option = document.createElement('option');
+        option.value = disease;
+        option.textContent = disease;
+        diseaseFilter.appendChild(option);
+      });
+
+      // Event listeners para filtros
+      document.getElementById('searchPatients').addEventListener('input', () => this.filterPatients(users, medications));
+      document.getElementById('filterMedication').addEventListener('change', () => this.filterPatients(users, medications));
+      document.getElementById('filterDisease').addEventListener('change', () => this.filterPatients(users, medications));
+      document.getElementById('filterAdherence').addEventListener('change', () => this.filterPatients(users, medications));
+
+      // Renderizar tabla inicial
+      this.filterPatients(users, medications);
+
+    } catch (error) {
+      container.innerHTML = '<div class="error">Error cargando pacientes</div>';
+    }
+  }
+
+  filterPatients(users, medications) {
+    const search = document.getElementById('searchPatients')?.value.toLowerCase() || '';
+    const medFilter = document.getElementById('filterMedication')?.value || '';
+    const diseaseFilter = document.getElementById('filterDisease')?.value || '';
+    const adherenceFilter = document.getElementById('filterAdherence')?.value || '';
+
+    let filtered = users;
+
+    // Filtro de búsqueda
+    if (search) {
+      filtered = filtered.filter(u => 
+        u.name.toLowerCase().includes(search) || 
+        u.email.toLowerCase().includes(search)
+      );
+    }
+
+    // Filtro de medicamento
+    if (medFilter) {
+      const med = medications.find(m => m._id === medFilter);
+      if (med && med.patients) {
+        const patientIds = med.patients.map(p => p._id || p);
+        filtered = filtered.filter(u => patientIds.includes(u._id));
+      }
+    }
+
+    // Filtro de enfermedad
+    if (diseaseFilter) {
+      filtered = filtered.filter(u => u.diseases && u.diseases.includes(diseaseFilter));
+    }
+
+    // Filtro de adherencia
+    if (adherenceFilter) {
+      const [min, max] = adherenceFilter.split('-').map(Number);
+      filtered = filtered.filter(u => {
+        const adh = u.adherenceRate || 100;
+        return adh >= min && adh <= max;
+      });
+    }
+
+    // Renderizar tabla
+    this.renderPatientsTable(filtered, medications);
+  }
+
+  renderPatientsTable(users, medications) {
+    const container = document.getElementById('patientsTable');
+    if (!container) return;
+
+    if (users.length === 0) {
+      container.innerHTML = '<div class="empty-state">No se encontraron pacientes</div>';
+      return;
+    }
+
+    container.innerHTML = `
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Nombre</th>
+            <th>Email</th>
+            <th>Medicamento</th>
+            <th>Enfermedad</th>
+            <th>Adherencia</th>
+            <th>Última Dosis</th>
+            <th>Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${users.map(user => {
+            const userMeds = medications.filter(m => m.patients && m.patients.some(p => (p._id || p) === user._id));
+            const adherence = user.adherenceRate || 100;
+            const adherenceClass = adherence >= 70 ? 'success' : 'danger';
+            
+            return `
+              <tr>
+                <td>${user.name}</td>
+                <td>${user.email}</td>
+                <td>${userMeds.map(m => m.name).join(', ') || '-'}</td>
+                <td>${user.diseases?.join(', ') || '-'}</td>
+                <td><span class="badge badge-${adherenceClass}">${adherence}%</span></td>
+                <td>${user.lastDose ? new Date(user.lastDose.takenAt).toLocaleDateString('es-ES') : '-'}</td>
+                <td>
+                  <button class="btn btn-sm btn-secondary" onclick="app.showPatientProfile('${user._id}')">
+                    Ver Perfil
+                  </button>
+                </td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    `;
+  }
+
+  async showPatientProfile(patientId) {
+    this.showMessage('Funcionalidad de perfil completo disponible en Fase 4', 'info');
+  }
+
+  async renderMedications(container) {
+    try {
+      const medications = await api.getMedications();
+
+      container.innerHTML = `
+        <div class="medications-section">
+          <div class="section-header">
+            <h2>💊 Gestión de Medicamentos</h2>
+            <button class="btn btn-primary" onclick="app.showAddMedicationModal()">
+              + Nuevo Medicamento
+            </button>
+          </div>
+          
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Nombre</th>
+                <th>Principio Activo</th>
+                <th>Indicaciones</th>
+                <th>Pacientes</th>
+                <th>Adherencia</th>
+                <th>Eventos Adversos</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${medications.map(med => `
+                <tr>
+                  <td><strong>${med.name}</strong></td>
+                  <td>${med.activeIngredient || '-'}</td>
+                  <td>${med.indications?.slice(0, 2).join(', ') || '-'}</td>
+                  <td>${med.patientCount || 0}</td>
+                  <td>${med.averageAdherence || 100}%</td>
+                  <td>${med.adverseEventsCount?.total || 0}</td>
+                  <td>
+                    <button class="btn btn-sm btn-secondary" onclick="app.editMedication('${med._id}')">
+                      Editar
+                    </button>
+                    <button class="btn btn-sm btn-danger" onclick="app.deleteMedication('${med._id}')">
+                      Eliminar
+                    </button>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    } catch (error) {
+      container.innerHTML = '<div class="error">Error cargando medicamentos</div>';
+    }
+  }
+
+  showAddMedicationModal() {
+    const modal = document.createElement('div');
+    modal.className = 'modal active';
+    modal.innerHTML = `
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Nuevo Medicamento</h2>
+          <button class="close-btn" onclick="this.closest('.modal').remove()">×</button>
+        </div>
+        
+        <form id="addMedicationForm">
+          <div class="form-group">
+            <label>Nombre del Medicamento *</label>
+            <input type="text" id="medName" required>
+          </div>
+          
+          <div class="form-group">
+            <label>Descripción *</label>
+            <textarea id="medDescription" rows="3" required></textarea>
+          </div>
+          
+          <div class="form-group">
+            <label>Principio Activo</label>
+            <input type="text" id="medActiveIngredient">
+          </div>
+          
+          <div class="form-group">
+            <label>URL del Video (YouTube)</label>
+            <input type="url" id="medVideoUrl" placeholder="https://youtube.com/...">
+          </div>
+          
+          <div class="modal-actions">
+            <button type="submit" class="btn btn-primary">Crear</button>
+            <button type="button" class="btn btn-secondary" 
+              onclick="this.closest('.modal').remove()">Cancelar</button>
+          </div>
+        </form>
+      </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    document.getElementById('addMedicationForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      await this.createMedication();
+    });
+  }
+
+  async createMedication() {
+    const name = document.getElementById('medName').value;
+    const description = document.getElementById('medDescription').value;
+    const activeIngredient = document.getElementById('medActiveIngredient').value;
+    const videoUrl = document.getElementById('medVideoUrl').value;
+
+    try {
+      await api.createMedication({ 
+        name, 
+        description, 
+        activeIngredient,
+        videoUrl 
+      });
+      this.showMessage('Medicamento creado correctamente', 'success');
+      document.querySelector('.modal').remove();
+      this.showAdminSection('medications');
+    } catch (error) {
+      this.showMessage('Error creando medicamento: ' + error.message, 'error');
+    }
+  }
+
+  async editMedication(medicationId) {
+    this.showMessage('Funcionalidad de edición disponible próximamente', 'info');
+  }
+
+  async deleteMedication(medicationId) {
+    if (!confirm('¿Estás seguro de eliminar este medicamento?')) return;
+
+    try {
+      await api.deleteMedication(medicationId);
+      this.showMessage('Medicamento eliminado', 'success');
+      this.showAdminSection('medications');
+    } catch (error) {
+      this.showMessage('Error eliminando medicamento: ' + error.message, 'error');
+    }
+  }
+
+  async renderConsultations(container) {
+    try {
+      const consultations = await api.getAllConsultations();
+
+      container.innerHTML = `
+        <div class="consultations-section">
+          <div class="section-header">
+            <h2>💬 Gestión de Consultas</h2>
+            <button id="toggleResolvedBtn" class="btn btn-secondary" onclick="app.toggleResolvedConsultations()">
+              Ver Resueltas
+            </button>
+          </div>
+          
+          <div id="consultationsContainer"></div>
+        </div>
+      `;
+
+      this.showPendingConsultations = true;
+      this.renderConsultationsList(consultations);
+
+    } catch (error) {
+      container.innerHTML = '<div class="error">Error cargando consultas</div>';
+    }
+  }
+
+  toggleResolvedConsultations() {
+    this.showPendingConsultations = !this.showPendingConsultations;
+    const btn = document.getElementById('toggleResolvedBtn');
+    btn.textContent = this.showPendingConsultations ? 'Ver Resueltas' : 'Ver Pendientes';
+    
+    api.getAllConsultations().then(consultations => {
+      this.renderConsultationsList(consultations);
+    });
+  }
+
+  renderConsultationsList(allConsultations) {
+    const container = document.getElementById('consultationsContainer');
+    if (!container) return;
+
+    const consultations = this.showPendingConsultations
+      ? allConsultations.filter(c => c.status === 'pending')
+      : allConsultations.filter(c => c.status === 'resolved');
+
+    if (consultations.length === 0) {
+      container.innerHTML = `
+        <div class="empty-state">
+          No hay consultas ${this.showPendingConsultations ? 'pendientes' : 'resueltas'}
+        </div>
+      `;
+      return;
+    }
+
+    container.innerHTML = `
+      <div class="consultations-admin-list">
+        ${consultations.map(consult => `
+          <div class="consultation-admin-card ${consult.status}">
+            <div class="consultation-admin-header">
+              <div>
+                <h3>${consult.patient?.name || 'Paciente'}</h3>
+                <p>${consult.patient?.email || ''}</p>
+              </div>
+              <div>
+                <span class="badge badge-${consult.status === 'resolved' ? 'success' : 'warning'}">
+                  ${consult.status === 'resolved' ? 'Resuelta' : 'Pendiente'}
+                </span>
+                ${consult.urgency === 'high' ? '<span class="badge badge-danger">Urgente</span>' : ''}
+              </div>
+            </div>
+            
+            <div class="consultation-admin-body">
+              <p><strong>Asunto:</strong> ${this.getSubjectText(consult.subject)}</p>
+              <p><strong>Mensaje:</strong> ${consult.message}</p>
+              ${consult.contact ? `<p><strong>Contacto:</strong> ${consult.contact}</p>` : ''}
+              <p><strong>Fecha:</strong> ${new Date(consult.createdAt).toLocaleDateString('es-ES')}</p>
+            </div>
+            
+            ${consult.status === 'pending' ? `
+              <div class="consultation-admin-actions">
+                <button class="btn btn-primary" 
+                  onclick="app.showRespondModal('${consult._id}')">
+                  Responder
+                </button>
+              </div>
+            ` : `
+              <div class="consultation-response-view">
+                <strong>Tu respuesta:</strong>
+                <p>${consult.response}</p>
+                <small>Respondido el ${new Date(consult.respondedAt).toLocaleDateString('es-ES')}</small>
+              </div>
+            `}
+          </div>
+        `).join('')}
       </div>
     `;
   }
 
-  // ===== ADMIN DASHBOARD (mantener código existente) =====
-  
-  async renderAdminDashboard(container) {
-    // ... código admin existente ...
-    container.innerHTML = '<div class="empty-state">Panel de Administración</div>';
+  showRespondModal(consultationId) {
+    const modal = document.createElement('div');
+    modal.className = 'modal active';
+    modal.innerHTML = `
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Responder Consulta</h2>
+          <button class="close-btn" onclick="this.closest('.modal').remove()">×</button>
+        </div>
+        
+        <form id="respondForm">
+          <div class="form-group">
+            <label>Tu Respuesta</label>
+            <textarea id="responseText" rows="6" required 
+              placeholder="Escribe tu respuesta al paciente..."></textarea>
+          </div>
+          
+          <div class="modal-actions">
+            <button type="submit" class="btn btn-primary">Enviar Respuesta</button>
+            <button type="button" class="btn btn-secondary" 
+              onclick="this.closest('.modal').remove()">Cancelar</button>
+          </div>
+        </form>
+      </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    document.getElementById('respondForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      await this.respondConsultation(consultationId);
+    });
+  }
+
+  async respondConsultation(consultationId) {
+    const response = document.getElementById('responseText').value;
+
+    try {
+      await api.respondConsultation(consultationId, response);
+      this.showMessage('Respuesta enviada correctamente', 'success');
+      document.querySelector('.modal').remove();
+      this.showAdminSection('consultations');
+    } catch (error) {
+      this.showMessage('Error enviando respuesta: ' + error.message, 'error');
+    }
   }
 
   showMessage(message, type = 'info') {
@@ -1321,7 +1230,6 @@ class FarmaFollowApp {
   logout() {
     localStorage.removeItem('token');
     this.user = null;
-    this.stopReminderChecker();
     this.showScreen('login');
   }
 }
