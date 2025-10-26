@@ -14,6 +14,7 @@ class FarmaFollowApp {
       adherence: '',
       search: ''
     };
+    this.showPendingConsultations = true;
   }
 
   async init() {
@@ -30,6 +31,7 @@ class FarmaFollowApp {
         }
       } catch (error) {
         logger.error('Error verificando autenticación:', error);
+        localStorage.removeItem('token');
         this.showScreen('login');
       }
     } else {
@@ -162,7 +164,12 @@ class FarmaFollowApp {
 
     try {
       const response = await api.login(email, password);
+      
+      // ✅ CRÍTICO: Guardar token y usuario
+      localStorage.setItem('token', response.token);
       this.user = response.user;
+      
+      logger.log('Login exitoso:', this.user.name);
       
       if (this.user.role === 'admin') {
         this.showScreen('admin-dashboard');
@@ -170,7 +177,8 @@ class FarmaFollowApp {
         this.showScreen('dashboard');
       }
     } catch (error) {
-      this.showMessage('Error: ' + error.message, 'error');
+      logger.error('Error en login:', error);
+      this.showMessage('❌ ' + error.message, 'error');
     }
   }
 
@@ -181,15 +189,28 @@ class FarmaFollowApp {
     const password = document.getElementById('password').value;
 
     try {
-      await api.register(name, email, password);
-      this.showMessage('¡Registro exitoso! Por favor inicia sesión.', 'success');
-      setTimeout(() => this.showScreen('login'), 2000);
+      const response = await api.register({ name, email, password });
+      
+      // ✅ CRÍTICO: Guardar token y usuario después del registro
+      localStorage.setItem('token', response.token);
+      this.user = response.user;
+      
+      this.showMessage('✅ ¡Registro exitoso!', 'success');
+      
+      setTimeout(() => {
+        if (this.user.role === 'admin') {
+          this.showScreen('admin-dashboard');
+        } else {
+          this.showScreen('dashboard');
+        }
+      }, 1000);
     } catch (error) {
-      this.showMessage('Error: ' + error.message, 'error');
+      logger.error('Error en registro:', error);
+      this.showMessage('❌ ' + error.message, 'error');
     }
   }
 
-  // PANEL DE PACIENTE
+  // ===== PANEL DE PACIENTE =====
   async renderPatientDashboard(container) {
     try {
       const [medications, reminders] = await Promise.all([
@@ -200,18 +221,26 @@ class FarmaFollowApp {
       this.medications = medications;
       this.reminders = reminders;
 
-      const adherence = this.user.adherenceRate || 100;
+      const stats = await api.getAdherenceStats();
 
       container.innerHTML = `
         <div class="dashboard">
           <div class="dashboard-header">
-            <h1>Hola, ${this.user.name} 👋</h1>
+            <h2>Hola, ${this.user.name} 👋</h2>
             <button class="btn btn-secondary" onclick="app.logout()">
-              Cerrar Sesión
+              🚪 Cerrar Sesión
             </button>
           </div>
 
           <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-icon">📊</div>
+              <div class="stat-content">
+                <h3>${stats.overall.adherenceRate}%</h3>
+                <p>Adherencia</p>
+              </div>
+            </div>
+            
             <div class="stat-card">
               <div class="stat-icon">💊</div>
               <div class="stat-content">
@@ -221,321 +250,195 @@ class FarmaFollowApp {
             </div>
             
             <div class="stat-card">
-              <div class="stat-icon">📊</div>
+              <div class="stat-icon">⏰</div>
               <div class="stat-content">
-                <h3>${adherence}%</h3>
-                <p>Adherencia</p>
+                <h3>${reminders.length}</h3>
+                <p>Recordatorios</p>
               </div>
             </div>
             
             <div class="stat-card">
-              <div class="stat-icon">🔔</div>
+              <div class="stat-icon">🔥</div>
               <div class="stat-content">
-                <h3>${reminders.filter(r => r.isActive).length}</h3>
-                <p>Recordatorios</p>
+                <h3>${stats.overall.currentStreak}</h3>
+                <p>Días Racha</p>
               </div>
             </div>
           </div>
 
-          <div id="medicationsContainer" class="medications-container"></div>
-          
-          <div class="card" style="margin-top: 2rem;">
-            <h3>💬 Mis Consultas</h3>
-            <div id="patientConsultations" class="consultations-list">
-              <div class="loading">Cargando consultas...</div>
+          <div class="dashboard-section">
+            <h3>💊 Tus Medicamentos</h3>
+            <div class="medications-list">
+              ${medications.length > 0 
+                ? medications.map(med => this.renderMedicationCard(med)).join('') 
+                : '<p class="empty-state">No tienes medicamentos asignados aún</p>'
+              }
             </div>
-            <button class="btn btn-primary" onclick="app.showScreen('consult')">
-              📝 Nueva Consulta
+          </div>
+
+          <div class="dashboard-actions">
+            <button class="btn btn-primary" onclick="app.showScreen('reminders')">
+              ⏰ Ver Recordatorios
+            </button>
+            <button class="btn btn-secondary" onclick="app.showScreen('consult')">
+              💬 Consultar al Farmacéutico
             </button>
           </div>
         </div>
       `;
-
-      const medicationsContainer = document.getElementById('medicationsContainer');
-
-      if (medications.length === 0) {
-        medicationsContainer.innerHTML = `
-          <div class="empty-state">
-            <p>📭 Sin medicamento asignado</p>
-            <p style="color: var(--text-secondary);">Tu farmacéutico te asignará un medicamento pronto.</p>
-          </div>
-        `;
-      } else {
-        medications.forEach(med => {
-          const card = document.createElement('div');
-          card.className = 'medication-card';
-          card.innerHTML = `
-            <div class="medication-header">
-              <h3>${med.name}</h3>
-            </div>
-            <p class="medication-description">${med.description}</p>
-            <div class="medication-actions">
-              <button class="btn btn-primary" onclick="app.showMedicationDetail('${med._id}')">
-                Ver Detalles
-              </button>
-              <button class="btn btn-secondary" onclick="app.showScreen('reminders')">
-                Recordatorios
-              </button>
-              <button class="btn btn-secondary" onclick="app.showScreen('consult')">
-                Consultar
-              </button>
-            </div>
-          `;
-          medicationsContainer.appendChild(card);
-        });
-      }
-
-      this.loadConsultations();
-
     } catch (error) {
       logger.error('Error cargando dashboard:', error);
       container.innerHTML = '<div class="error">Error cargando dashboard</div>';
     }
   }
 
-  async showMedicationDetail(medicationId) {
-    this.currentMedication = this.medications.find(m => m._id === medicationId);
+  renderMedicationCard(med) {
+    return `
+      <div class="medication-card">
+        <div class="medication-header">
+          <h4>${med.name}</h4>
+          ${med.adherence ? `<span class="badge ${med.adherence >= 70 ? 'success' : 'danger'}">${med.adherence}%</span>` : ''}
+        </div>
+        <p>${med.description}</p>
+        <div class="medication-actions">
+          <button class="btn btn-sm" onclick="app.viewMedication('${med._id}')">Ver Info</button>
+        </div>
+      </div>
+    `;
+  }
+
+  async viewMedication(medId) {
+    this.currentMedication = medId;
     this.showScreen('medication');
   }
 
-  renderMedicationDetail(container) {
-    const med = this.currentMedication;
-    if (!med) {
-      this.showScreen('dashboard');
-      return;
-    }
-
-    container.innerHTML = `
-      <div class="medication-detail">
-        <div class="detail-header">
-          <button class="btn btn-secondary" onclick="app.showScreen('dashboard')">
-            ← Volver
-          </button>
-          <h1>${med.name}</h1>
-        </div>
-
-        <div class="detail-content">
-          <section class="detail-section">
-            <h2>📝 Descripción</h2>
-            <p>${med.description}</p>
-          </section>
-
-          ${med.videoUrl ? `
-            <section class="detail-section">
-              <h2>🎥 Video de Administración</h2>
-              <div class="video-container">
-                <iframe 
-                  src="${med.videoUrl}" 
-                  frameborder="0" 
-                  allowfullscreen>
-                </iframe>
-              </div>
-            </section>
-          ` : ''}
-
-          ${med.faqs && med.faqs.length > 0 ? `
-            <section class="detail-section">
-              <h2>❓ Preguntas Frecuentes</h2>
-              <div class="faqs">
-                ${med.faqs.map(faq => `
-                  <div class="faq-item">
-                    <h3>${faq.question}</h3>
-                    <p>${faq.answer}</p>
-                  </div>
-                `).join('')}
-              </div>
-            </section>
-          ` : ''}
-
-          <section class="detail-section">
-            <h2>💬 ¿Tienes dudas?</h2>
-            <button class="btn btn-primary" onclick="app.showScreen('consult')">
-              Consultar al Farmacéutico
-            </button>
-          </section>
-        </div>
-      </div>
-    `;
-  }
-
-  renderReminders(container) {
-    container.innerHTML = `
-      <div class="reminders-screen">
-        <div class="screen-header">
-          <button class="btn btn-secondary" onclick="app.showScreen('dashboard')">
-            ← Volver
-          </button>
-          <h1>🔔 Recordatorios</h1>
-        </div>
-
-        <div id="remindersList" class="reminders-list"></div>
-      </div>
-    `;
-
-    this.renderRemindersList();
-  }
-
-  async renderRemindersList() {
-    const container = document.getElementById('remindersList');
-    if (!container) return;
-
+  async renderMedicationDetail(container) {
     try {
-      this.reminders = await api.getReminders();
+      const med = await api.getMedication(this.currentMedication);
+      
+      container.innerHTML = `
+        <div class="medication-detail">
+          <button class="btn btn-secondary" onclick="app.showScreen('dashboard')">
+            ← Volver
+          </button>
+          
+          <h2>${med.name}</h2>
+          <p>${med.description}</p>
+          
+          ${med.videoUrl ? `
+            <div class="video-container">
+              <iframe src="${med.videoUrl}" frameborder="0" allowfullscreen></iframe>
+            </div>
+          ` : ''}
+          
+          ${med.faqs && med.faqs.length > 0 ? `
+            <div class="faqs">
+              <h3>Preguntas Frecuentes</h3>
+              ${med.faqs.map(faq => `
+                <div class="faq-item">
+                  <h4>${faq.question}</h4>
+                  <p>${faq.answer}</p>
+                </div>
+              `).join('')}
+            </div>
+          ` : ''}
+        </div>
+      `;
+    } catch (error) {
+      container.innerHTML = '<div class="error">Error cargando medicamento</div>';
+    }
+  }
 
-      if (this.reminders.length === 0) {
-        container.innerHTML = '<div class="empty-state">No tienes recordatorios configurados</div>';
-        return;
-      }
-
-      container.innerHTML = this.reminders.map(reminder => `
-        <div class="reminder-card ${reminder.isActive ? 'active' : 'inactive'}">
-          <div class="reminder-info">
-            <h3>${reminder.medication?.name || 'Medicamento'}</h3>
-            <p>🕐 ${reminder.time}</p>
-            <p>📅 ${this.getFrequencyText(reminder.frequency)}</p>
-          </div>
-          <div class="reminder-actions">
-            <button 
-              class="btn ${reminder.isActive ? 'btn-secondary' : 'btn-primary'}" 
-              onclick="app.toggleReminder('${reminder._id}')">
-              ${reminder.isActive ? 'Desactivar' : 'Activar'}
-            </button>
+  async renderReminders(container) {
+    try {
+      const reminders = await api.getReminders();
+      
+      container.innerHTML = `
+        <div class="reminders-view">
+          <button class="btn btn-secondary" onclick="app.showScreen('dashboard')">
+            ← Volver
+          </button>
+          
+          <h2>⏰ Recordatorios</h2>
+          
+          <div class="reminders-list">
+            ${reminders.map(reminder => `
+              <div class="reminder-card">
+                <h4>${reminder.medication.name}</h4>
+                <p>🕐 ${reminder.time}</p>
+                <p>Adherencia: ${reminder.adherence}%</p>
+              </div>
+            `).join('')}
           </div>
         </div>
-      `).join('');
+      `;
     } catch (error) {
       container.innerHTML = '<div class="error">Error cargando recordatorios</div>';
     }
   }
 
-  getFrequencyText(frequency) {
-    const frequencies = {
-      'daily': 'Todos los días',
-      'weekly': 'Semanal',
-      'custom': 'Personalizado'
-    };
-    return frequencies[frequency] || frequency;
-  }
-
-  async toggleReminder(reminderId) {
+  async renderConsult(container) {
     try {
-      const reminder = this.reminders.find(r => r._id === reminderId);
-      await api.updateReminder(reminderId, { isActive: !reminder.isActive });
-      await this.renderRemindersList();
-      this.showMessage('Recordatorio actualizado', 'success');
-    } catch (error) {
-      this.showMessage('Error actualizando recordatorio', 'error');
-    }
-  }
-
-  renderConsult(container) {
-    container.innerHTML = `
-      <div class="consult-screen">
-        <div class="screen-header">
+      const medications = await api.getMedications();
+      
+      container.innerHTML = `
+        <div class="consult-view">
           <button class="btn btn-secondary" onclick="app.showScreen('dashboard')">
             ← Volver
           </button>
-          <h1>💬 Consultar al Farmacéutico</h1>
+          
+          <h2>💬 Consultar al Farmacéutico</h2>
+          
+          <form id="consultForm">
+            <div class="form-group">
+              <label>Asunto</label>
+              <select id="consultSubject" required>
+                <option value="">Seleccionar...</option>
+                <option value="efectos-secundarios">Efectos Secundarios</option>
+                <option value="dudas-medicamento">Dudas sobre Medicamento</option>
+                <option value="interacciones">Interacciones</option>
+                <option value="otro">Otro</option>
+              </select>
+            </div>
+            
+            <div class="form-group">
+              <label>Mensaje</label>
+              <textarea id="consultMessage" rows="4" required></textarea>
+            </div>
+            
+            <div class="form-group">
+              <label>Urgencia</label>
+              <select id="consultUrgency">
+                <option value="low">Baja</option>
+                <option value="medium">Media</option>
+                <option value="high">Alta</option>
+              </select>
+            </div>
+            
+            <button type="submit" class="btn btn-primary">Enviar Consulta</button>
+          </form>
         </div>
-
-        <form id="consultForm" class="consult-form">
-          <div class="form-group">
-            <label for="consultSubject">Asunto</label>
-            <select id="consultSubject" required>
-              <option value="">Selecciona un asunto</option>
-              <option value="dosificacion">Dosis y Administración</option>
-              <option value="efectos-secundarios">Efectos Secundarios</option>
-              <option value="interacciones">Interacciones</option>
-              <option value="almacenamiento">Almacenamiento</option>
-              <option value="otros">Otros</option>
-            </select>
-          </div>
-
-          <div class="form-group">
-            <label for="consultMessage">Mensaje *</label>
-            <textarea id="consultMessage" rows="6" required 
-              placeholder="Describe tu consulta..."></textarea>
-          </div>
-
-          <div class="form-group">
-            <label for="consultContact">Teléfono de Contacto (opcional)</label>
-            <input type="tel" id="consultContact" placeholder="123456789">
-          </div>
-
-          <button type="submit" class="btn btn-primary">
-            Enviar Consulta
-          </button>
-        </form>
-      </div>
-    `;
-
-    document.getElementById('consultForm').addEventListener('submit', (e) => {
-      e.preventDefault();
-      this.sendConsult();
-    });
-  }
-
-  async sendConsult() {
-    const subject = document.getElementById('consultSubject').value;
-    const message = document.getElementById('consultMessage').value.trim();
-    const contact = document.getElementById('consultContact').value.trim();
-    
-    if (!subject || !message) {
-      this.showMessage('Por favor completa los campos obligatorios', 'error');
-      return;
-    }
-    
-    const submitBtn = document.querySelector('.btn-primary');
-    const originalText = submitBtn.textContent;
-    submitBtn.textContent = '⏳ Enviando...';
-    submitBtn.disabled = true;
-    
-    try {
-      await api.createConsultation({
-        subject,
-        message,
-        contact,
-        urgency: subject === 'efectos-secundarios' ? 'high' : 'medium'
+      `;
+      
+      document.getElementById('consultForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        try {
+          await api.createConsultation({
+            subject: document.getElementById('consultSubject').value,
+            message: document.getElementById('consultMessage').value,
+            urgency: document.getElementById('consultUrgency').value
+          });
+          this.showMessage('✅ Consulta enviada correctamente', 'success');
+          setTimeout(() => this.showScreen('dashboard'), 2000);
+        } catch (error) {
+          this.showMessage('❌ Error: ' + error.message, 'error');
+        }
       });
-      
-      this.showMessage('✅ ¡Consulta enviada correctamente! Puedes verla en "Mis Consultas". Te responderemos pronto.', 'success');
-      
-      setTimeout(() => {
-        this.showScreen('dashboard');
-        this.loadConsultations();
-      }, 3000);
     } catch (error) {
-      submitBtn.textContent = originalText;
-      submitBtn.disabled = false;
-      this.showMessage('❌ Error al enviar consulta: ' + error.message, 'error');
+      container.innerHTML = '<div class="error">Error cargando formulario</div>';
     }
   }
 
-  async loadConsultations() {
-    const container = document.getElementById('patientConsultations');
-    if (!container) return;
-    
-    try {
-      const consultations = await api.getConsultations();
-      
-      if (consultations.length === 0) {
-        container.innerHTML = `
-          <div class="empty-state">
-            <p>📭 No tienes consultas todavía</p>
-            <p style="color: var(--text-secondary); font-size: 0.9rem;">
-              Haz una consulta al farmacéutico usando el botón de abajo
-            </p>
-          </div>
-        `;
-        return;
-      }
-      
-      container.innerHTML = consultations.map(consult => `
-        <div class="consultation-item ${consult.status === 'resolved' ? 'resolved' : 'pending'}">
-          <div class="consultation-header">
-            <div>
-              <strong>${this.getSubjectText(consult.subject)}</strong>
-              <span class="consultation-date">${new Date(consult.createdAt).toLocaleDateString('es-ES')}</span>
             </div>
             <span class="badge ${consult.status === 'resolved' ? 'badge-success' : 'badge-warning'}">
               ${consult.status === 'resolved' ? '✅ Respondida' : '⏳ Pendiente'}
