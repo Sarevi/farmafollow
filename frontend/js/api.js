@@ -1,394 +1,372 @@
-class API {
-  constructor() {
-    this.baseURL = CONFIG.API_URL;
-  }
+// ===== API CLIENT PARA FARMAFOLLOW =====
 
-  // ===== UTILIDADES =====
+const api = {
+  baseURL: '/api',
   
-  getToken() {
-    return localStorage.getItem('token');
-  }
-
-  async request(endpoint, options = {}) {
-    const url = `${this.baseURL}${endpoint}`;
-    const token = this.getToken();
-
-    const config = {
-      ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token && { Authorization: `Bearer ${token}` }),
-        ...options.headers,
-      },
+  getHeaders() {
+    const token = localStorage.getItem('token');
+    return {
+      'Content-Type': 'application/json',
+      'Authorization': token ? `Bearer ${token}` : ''
     };
+  },
 
-    try {
-      logger.log(`API Request: ${options.method || 'GET'} ${endpoint}`);
-      const response = await fetch(url, config);
-      
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Error en la petición');
-      }
-
-      return await response.json();
-    } catch (error) {
-      logger.error(`API Error: ${endpoint}`, error);
-      throw error;
-    }
-  }
-
-  // ===== AUTENTICACIÓN =====
-
-  async register(name, email, password, additionalData = {}) {
-    const response = await this.request('/auth/register', {
-      method: 'POST',
-      body: JSON.stringify({ 
-        name, 
-        email, 
-        password,
-        ...additionalData 
-      }),
-    });
-
-    if (response.token) {
-      localStorage.setItem('token', response.token);
-    }
-
-    return response;
-  }
-
+  // ===== AUTH =====
+  
   async login(email, password) {
-    const response = await this.request('/auth/login', {
+    const response = await fetch(`${this.baseURL}/auth/login`, {
       method: 'POST',
-      body: JSON.stringify({ email, password }),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
     });
-
-    if (response.token) {
-      localStorage.setItem('token', response.token);
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Error en login');
     }
+    return await response.json();
+  },
 
-    return response;
-  }
+  async register(data) {
+    const response = await fetch(`${this.baseURL}/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Error en registro');
+    }
+    return await response.json();
+  },
 
   async getCurrentUser() {
-    return await this.request('/auth/me');
-  }
+    const response = await fetch(`${this.baseURL}/auth/me`, {
+      headers: this.getHeaders()
+    });
+    if (!response.ok) throw new Error('Error obteniendo usuario');
+    return await response.json();
+  },
 
   async updateProfile(data) {
-    return await this.request('/auth/profile', {
+    const response = await fetch(`${this.baseURL}/auth/profile`, {
       method: 'PUT',
-      body: JSON.stringify(data),
+      headers: this.getHeaders(),
+      body: JSON.stringify(data)
     });
-  }
+    if (!response.ok) throw new Error('Error actualizando perfil');
+    return await response.json();
+  },
 
-  async changePassword(currentPassword, newPassword) {
-    return await this.request('/auth/change-password', {
-      method: 'POST',
-      body: JSON.stringify({ currentPassword, newPassword }),
+  // ===== MEDICATIONS =====
+  
+  async getMedications() {
+    const response = await fetch(`${this.baseURL}/medications`, {
+      headers: this.getHeaders()
     });
-  }
+    if (!response.ok) throw new Error('Error obteniendo medicamentos');
+    return await response.json();
+  },
 
-  // ===== USUARIOS =====
-
-  async getUsers(filters = {}) {
-    const params = new URLSearchParams();
-    if (filters.medication) params.append('medication', filters.medication);
-    if (filters.disease) params.append('disease', filters.disease);
-    if (filters.minAdherence) params.append('minAdherence', filters.minAdherence);
-    if (filters.maxAdherence) params.append('maxAdherence', filters.maxAdherence);
-    if (filters.search) params.append('search', filters.search);
-
-    const query = params.toString();
-    return await this.request(`/users${query ? '?' + query : ''}`);
-  }
-
-  async getUser(userId) {
-    return await this.request(`/users/${userId}`);
-  }
-
-  async getUserProfile(userId) {
-    return await this.request(`/users/${userId}/profile`);
-  }
-
-  async updateUser(userId, data) {
-    return await this.request(`/users/${userId}`, {
-      method: 'PUT',
-      body: JSON.stringify(data),
+  async getMedication(id) {
+    const response = await fetch(`${this.baseURL}/medications/${id}`, {
+      headers: this.getHeaders()
     });
-  }
-
-  async deleteUser(userId) {
-    return await this.request(`/users/${userId}`, {
-      method: 'DELETE',
-    });
-  }
-
-  // Eventos adversos
-  async addAdverseEvent(userId, eventData) {
-    return await this.request(`/users/${userId}/adverse-events`, {
-      method: 'POST',
-      body: JSON.stringify(eventData),
-    });
-  }
-
-  async updateAdverseEvent(userId, eventId, data) {
-    return await this.request(`/users/${userId}/adverse-events/${eventId}`, {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    });
-  }
-
-  async deleteAdverseEvent(userId, eventId) {
-    return await this.request(`/users/${userId}/adverse-events/${eventId}`, {
-      method: 'DELETE',
-    });
-  }
-
-  // Notas del farmacéutico
-  async addNote(userId, content) {
-    return await this.request(`/users/${userId}/notes`, {
-      method: 'POST',
-      body: JSON.stringify({ content }),
-    });
-  }
-
-  async updateNote(userId, noteId, content) {
-    return await this.request(`/users/${userId}/notes/${noteId}`, {
-      method: 'PUT',
-      body: JSON.stringify({ content }),
-    });
-  }
-
-  async deleteNote(userId, noteId) {
-    return await this.request(`/users/${userId}/notes/${noteId}`, {
-      method: 'DELETE',
-    });
-  }
-
-  // Adherencia
-  async getUserAdherence(userId, days = 30) {
-    return await this.request(`/users/${userId}/adherence?days=${days}`);
-  }
-
-  // ===== MEDICAMENTOS =====
-
-  async getMedications(filters = {}) {
-    const params = new URLSearchParams();
-    if (filters.search) params.append('search', filters.search);
-    if (filters.indication) params.append('indication', filters.indication);
-    if (filters.isActive !== undefined) params.append('isActive', filters.isActive);
-
-    const query = params.toString();
-    return await this.request(`/medications${query ? '?' + query : ''}`);
-  }
-
-  async getMedication(medicationId) {
-    return await this.request(`/medications/${medicationId}`);
-  }
+    if (!response.ok) throw new Error('Error obteniendo medicamento');
+    return await response.json();
+  },
 
   async createMedication(data) {
-    return await this.request('/medications', {
+    const response = await fetch(`${this.baseURL}/medications`, {
       method: 'POST',
-      body: JSON.stringify(data),
+      headers: this.getHeaders(),
+      body: JSON.stringify(data)
     });
-  }
+    if (!response.ok) throw new Error('Error creando medicamento');
+    return await response.json();
+  },
 
-  async updateMedication(medicationId, data) {
-    return await this.request(`/medications/${medicationId}`, {
+  async updateMedication(id, data) {
+    const response = await fetch(`${this.baseURL}/medications/${id}`, {
       method: 'PUT',
-      body: JSON.stringify(data),
+      headers: this.getHeaders(),
+      body: JSON.stringify(data)
     });
-  }
+    if (!response.ok) throw new Error('Error actualizando medicamento');
+    return await response.json();
+  },
 
-  async deleteMedication(medicationId) {
-    return await this.request(`/medications/${medicationId}`, {
+  async deleteMedication(id) {
+    const response = await fetch(`${this.baseURL}/medications/${id}`, {
       method: 'DELETE',
+      headers: this.getHeaders()
     });
-  }
+    if (!response.ok) throw new Error('Error eliminando medicamento');
+    return await response.json();
+  },
 
-  async assignMedication(medicationId, patientId) {
-    return await this.request(`/medications/${medicationId}/assign`, {
-      method: 'POST',
-      body: JSON.stringify({ patientId }),
-    });
-  }
-
-  async unassignMedication(medicationId, patientId) {
-    return await this.request(`/medications/${medicationId}/unassign`, {
-      method: 'POST',
-      body: JSON.stringify({ patientId }),
-    });
-  }
-
-  async getMedicationPatients(medicationId) {
-    return await this.request(`/medications/${medicationId}/patients`);
-  }
-
-  async getMedicationStats(medicationId) {
-    return await this.request(`/medications/${medicationId}/stats`);
-  }
-
-  // FAQs de medicamentos
-  async addMedicationFAQ(medicationId, question, answer) {
-    return await this.request(`/medications/${medicationId}/faqs`, {
-      method: 'POST',
-      body: JSON.stringify({ question, answer }),
-    });
-  }
-
-  async updateMedicationFAQ(medicationId, faqId, question, answer) {
-    return await this.request(`/medications/${medicationId}/faqs/${faqId}`, {
-      method: 'PUT',
-      body: JSON.stringify({ question, answer }),
-    });
-  }
-
-  async deleteMedicationFAQ(medicationId, faqId) {
-    return await this.request(`/medications/${medicationId}/faqs/${faqId}`, {
-      method: 'DELETE',
-    });
-  }
-
-  async getMedicationIndications() {
-    return await this.request('/medications/meta/indications');
-  }
-
-  // ===== RECORDATORIOS =====
-
+  // ===== REMINDERS =====
+  
   async getReminders() {
-    return await this.request('/reminders');
-  }
+    const response = await fetch(`${this.baseURL}/reminders`, {
+      headers: this.getHeaders()
+    });
+    if (!response.ok) throw new Error('Error obteniendo recordatorios');
+    return await response.json();
+  },
+
+  async getReminder(id) {
+    const response = await fetch(`${this.baseURL}/reminders/${id}`, {
+      headers: this.getHeaders()
+    });
+    if (!response.ok) throw new Error('Error obteniendo recordatorio');
+    return await response.json();
+  },
 
   async createReminder(data) {
-    return await this.request('/reminders', {
+    const response = await fetch(`${this.baseURL}/reminders`, {
       method: 'POST',
-      body: JSON.stringify(data),
+      headers: this.getHeaders(),
+      body: JSON.stringify(data)
     });
-  }
+    if (!response.ok) throw new Error('Error creando recordatorio');
+    return await response.json();
+  },
 
-  async updateReminder(reminderId, data) {
-    return await this.request(`/reminders/${reminderId}`, {
+  async updateReminder(id, data) {
+    const response = await fetch(`${this.baseURL}/reminders/${id}`, {
       method: 'PUT',
-      body: JSON.stringify(data),
+      headers: this.getHeaders(),
+      body: JSON.stringify(data)
     });
-  }
+    if (!response.ok) throw new Error('Error actualizando recordatorio');
+    return await response.json();
+  },
 
-  async deleteReminder(reminderId) {
-    return await this.request(`/reminders/${reminderId}`, {
+  async deleteReminder(id) {
+    const response = await fetch(`${this.baseURL}/reminders/${id}`, {
       method: 'DELETE',
+      headers: this.getHeaders()
     });
-  }
+    if (!response.ok) throw new Error('Error eliminando recordatorio');
+    return await response.json();
+  },
 
   async recordDose(reminderId, taken, notes = '') {
-    return await this.request(`/reminders/${reminderId}/record-dose`, {
+    const response = await fetch(`${this.baseURL}/reminders/${reminderId}/record-dose`, {
       method: 'POST',
-      body: JSON.stringify({ taken, notes }),
+      headers: this.getHeaders(),
+      body: JSON.stringify({ taken, notes })
     });
-  }
+    if (!response.ok) throw new Error('Error registrando dosis');
+    return await response.json();
+  },
 
   async getReminderHistory(reminderId) {
-    return await this.request(`/reminders/${reminderId}/history`);
-  }
+    const response = await fetch(`${this.baseURL}/reminders/${reminderId}/history`, {
+      headers: this.getHeaders()
+    });
+    if (!response.ok) throw new Error('Error obteniendo historial');
+    return await response.json();
+  },
 
-  // ===== CONSULTAS =====
+  async getAdherenceStats() {
+    const response = await fetch(`${this.baseURL}/reminders/stats/adherence`, {
+      headers: this.getHeaders()
+    });
+    if (!response.ok) throw new Error('Error obteniendo estadísticas');
+    return await response.json();
+  },
 
+  // ===== CONSULTATIONS =====
+  
   async getConsultations() {
-    return await this.request('/consultations');
-  }
+    const response = await fetch(`${this.baseURL}/consultations`, {
+      headers: this.getHeaders()
+    });
+    if (!response.ok) throw new Error('Error obteniendo consultas');
+    return await response.json();
+  },
 
-  async getAllConsultations() {
-    return await this.request('/consultations/all');
-  }
+  async getConsultation(id) {
+    const response = await fetch(`${this.baseURL}/consultations/${id}`, {
+      headers: this.getHeaders()
+    });
+    if (!response.ok) throw new Error('Error obteniendo consulta');
+    return await response.json();
+  },
 
   async createConsultation(data) {
-    return await this.request('/consultations', {
+    const response = await fetch(`${this.baseURL}/consultations`, {
       method: 'POST',
-      body: JSON.stringify(data),
+      headers: this.getHeaders(),
+      body: JSON.stringify(data)
     });
-  }
+    if (!response.ok) throw new Error('Error creando consulta');
+    return await response.json();
+  },
 
-  async respondConsultation(consultationId, response) {
-    return await this.request(`/consultations/${consultationId}/respond`, {
+  async updateConsultation(id, data) {
+    const response = await fetch(`${this.baseURL}/consultations/${id}`, {
       method: 'PUT',
-      body: JSON.stringify({ response }),
+      headers: this.getHeaders(),
+      body: JSON.stringify(data)
     });
-  }
+    if (!response.ok) throw new Error('Error actualizando consulta');
+    return await response.json();
+  },
 
-  async deleteConsultation(consultationId) {
-    return await this.request(`/consultations/${consultationId}`, {
-      method: 'DELETE',
+  async addMessage(consultationId, message) {
+    const response = await fetch(`${this.baseURL}/consultations/${consultationId}/messages`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ message })
     });
-  }
+    if (!response.ok) throw new Error('Error enviando mensaje');
+    return await response.json();
+  },
 
-  // ===== ANALYTICS =====
-
+  // ===== ANALYTICS (ADMIN) =====
+  
   async getAnalytics() {
-    return await this.request('/analytics');
-  }
-
-  async getAnalyticsByMedication() {
-    return await this.request('/analytics/by-medication');
-  }
-
-  async getAnalyticsByDisease() {
-    return await this.request('/analytics/by-disease');
-  }
-
-  async getLowAdherencePatients(threshold = 70) {
-    return await this.request(`/analytics/low-adherence?threshold=${threshold}`);
-  }
-
-  async exportData(type) {
-    // type: 'patients', 'medications', 'consultations', 'questionnaires'
-    return await this.request(`/analytics/export?type=${type}`);
-  }
-
-  // ===== CUESTIONARIOS (Preparado para Fase 2) =====
-
-  async getQuestionnaires() {
-    return await this.request('/questionnaires');
-  }
-
-  async getQuestionnaire(questionnaireId) {
-    return await this.request(`/questionnaires/${questionnaireId}`);
-  }
-
-  async createQuestionnaire(data) {
-    return await this.request('/questionnaires', {
-      method: 'POST',
-      body: JSON.stringify(data),
+    const response = await fetch(`${this.baseURL}/analytics`, {
+      headers: this.getHeaders()
     });
-  }
+    if (!response.ok) throw new Error('Error obteniendo analytics');
+    return await response.json();
+  },
 
-  async updateQuestionnaire(questionnaireId, data) {
-    return await this.request(`/questionnaires/${questionnaireId}`, {
+  async getAdherenceReport() {
+    const response = await fetch(`${this.baseURL}/analytics/adherence`, {
+      headers: this.getHeaders()
+    });
+    if (!response.ok) throw new Error('Error obteniendo reporte de adherencia');
+    return await response.json();
+  },
+
+  // ===== USERS (ADMIN) =====
+  
+  async getUsers() {
+    const response = await fetch(`${this.baseURL}/users`, {
+      headers: this.getHeaders()
+    });
+    if (!response.ok) throw new Error('Error obteniendo usuarios');
+    return await response.json();
+  },
+
+  async getUser(id) {
+    const response = await fetch(`${this.baseURL}/users/${id}`, {
+      headers: this.getHeaders()
+    });
+    if (!response.ok) throw new Error('Error obteniendo usuario');
+    return await response.json();
+  },
+
+  async updateUser(id, data) {
+    const response = await fetch(`${this.baseURL}/users/${id}`, {
       method: 'PUT',
-      body: JSON.stringify(data),
+      headers: this.getHeaders(),
+      body: JSON.stringify(data)
     });
-  }
+    if (!response.ok) throw new Error('Error actualizando usuario');
+    return await response.json();
+  },
 
-  async deleteQuestionnaire(questionnaireId) {
-    return await this.request(`/questionnaires/${questionnaireId}`, {
+  async deleteUser(id) {
+    const response = await fetch(`${this.baseURL}/users/${id}`, {
       method: 'DELETE',
+      headers: this.getHeaders()
     });
-  }
+    if (!response.ok) throw new Error('Error eliminando usuario');
+    return await response.json();
+  },
 
-  async getQuestionnaireResponses(questionnaireId) {
-    return await this.request(`/questionnaires/${questionnaireId}/responses`);
-  }
+  // ===== CUESTIONARIOS (NUEVOS) =====
 
-  async submitQuestionnaireResponse(questionnaireId, responses) {
-    return await this.request(`/questionnaires/${questionnaireId}/respond`, {
+  // Paciente - Cuestionarios pendientes
+  async getPendingQuestionnaires() {
+    const response = await fetch(`${this.baseURL}/questionnaires/pending/list`, {
+      headers: this.getHeaders()
+    });
+    if (!response.ok) throw new Error('Error obteniendo cuestionarios pendientes');
+    return await response.json();
+  },
+
+  // Paciente - Enviar respuesta
+  async submitQuestionnaire(responseId, responses) {
+    const response = await fetch(`${this.baseURL}/questionnaires/${responseId}/respond`, {
       method: 'POST',
-      body: JSON.stringify({ responses }),
+      headers: this.getHeaders(),
+      body: JSON.stringify({ responses })
     });
-  }
+    if (!response.ok) throw new Error('Error enviando cuestionario');
+    return await response.json();
+  },
 
-  async getMyPendingQuestionnaires() {
-    return await this.request('/questionnaires/pending');
-  }
-}
+  // Paciente - Mis respuestas completadas
+  async getMyQuestionnaireResponses() {
+    const response = await fetch(`${this.baseURL}/questionnaires/my-responses`, {
+      headers: this.getHeaders()
+    });
+    if (!response.ok) throw new Error('Error obteniendo mis respuestas');
+    return await response.json();
+  },
 
-// Crear instancia global
-const api = new API();
+  // Admin - Crear cuestionario
+  async createQuestionnaire(data) {
+    const response = await fetch(`${this.baseURL}/questionnaires`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify(data)
+    });
+    if (!response.ok) throw new Error('Error creando cuestionario');
+    return await response.json();
+  },
+
+  // Admin - Obtener todos los cuestionarios
+  async getQuestionnaires() {
+    const response = await fetch(`${this.baseURL}/questionnaires`, {
+      headers: this.getHeaders()
+    });
+    if (!response.ok) throw new Error('Error obteniendo cuestionarios');
+    return await response.json();
+  },
+
+  // Admin - Obtener un cuestionario específico
+  async getQuestionnaire(id) {
+    const response = await fetch(`${this.baseURL}/questionnaires/${id}`, {
+      headers: this.getHeaders()
+    });
+    if (!response.ok) throw new Error('Error obteniendo cuestionario');
+    return await response.json();
+  },
+
+  // Admin - Ver respuestas de un cuestionario
+  async getQuestionnaireResponses(questionnaireId) {
+    const response = await fetch(`${this.baseURL}/questionnaires/${questionnaireId}/responses`, {
+      headers: this.getHeaders()
+    });
+    if (!response.ok) throw new Error('Error obteniendo respuestas');
+    return await response.json();
+  },
+
+  // Admin - Actualizar cuestionario
+  async updateQuestionnaire(questionnaireId, data) {
+    const response = await fetch(`${this.baseURL}/questionnaires/${questionnaireId}`, {
+      method: 'PUT',
+      headers: this.getHeaders(),
+      body: JSON.stringify(data)
+    });
+    if (!response.ok) throw new Error('Error actualizando cuestionario');
+    return await response.json();
+  },
+
+  // Admin - Eliminar cuestionario
+  async deleteQuestionnaire(questionnaireId) {
+    const response = await fetch(`${this.baseURL}/questionnaires/${questionnaireId}`, {
+      method: 'DELETE',
+      headers: this.getHeaders()
+    });
+    if (!response.ok) throw new Error('Error eliminando cuestionario');
+    return await response.json();
+  }
+};

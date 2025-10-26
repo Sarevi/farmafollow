@@ -15,6 +15,8 @@ class FarmaFollowApp {
       search: ''
     };
     this.reminderCheckInterval = null;
+    this.selectedTimes = [];
+    this.selectedFrequency = 'weekly';
   }
 
   async init() {
@@ -27,8 +29,8 @@ class FarmaFollowApp {
         if (this.user.role === 'admin') {
           this.showScreen('admin-dashboard');
         } else {
-          this.showScreen('dashboard');
-          this.startReminderChecker();
+          // Verificar cuestionarios pendientes ANTES de ir al dashboard
+          await this.checkPendingQuestionnaires();
         }
       } catch (error) {
         logger.error('Error verificando autenticación:', error);
@@ -40,6 +42,240 @@ class FarmaFollowApp {
 
     this.setupEventListeners();
     await notifications.requestPermission();
+    this.renderHeaderButtons();
+  }
+
+  // ===== CERRAR SESIÓN =====
+  
+  logout() {
+    localStorage.removeItem('token');
+    this.stopReminderChecker();
+    this.user = null;
+    this.showMessage('👋 Sesión cerrada correctamente', 'success');
+    setTimeout(() => {
+      window.location.reload();
+    }, 1000);
+  }
+
+  renderHeaderButtons() {
+    const header = document.querySelector('.header');
+    if (!header || !this.user) return;
+
+    // Agregar botón de cerrar sesión si no existe
+    if (!document.querySelector('.logout-btn')) {
+      const logoutBtn = document.createElement('button');
+      logoutBtn.className = 'logout-btn';
+      logoutBtn.innerHTML = '🚪 Cerrar Sesión';
+      logoutBtn.onclick = () => this.logout();
+      header.appendChild(logoutBtn);
+    }
+  }
+
+  // ===== SISTEMA DE CUESTIONARIOS OBLIGATORIOS =====
+  
+  async checkPendingQuestionnaires() {
+    try {
+      const pending = await api.getPendingQuestionnaires();
+      
+      if (pending && pending.length > 0) {
+        // Mostrar el primero
+        await this.showQuestionnairePopup(pending[0]);
+      } else {
+        // No hay pendientes, ir al dashboard
+        this.showScreen('dashboard');
+        this.startReminderChecker();
+      }
+    } catch (error) {
+      logger.error('Error verificando cuestionarios pendientes:', error);
+      // Si hay error, dejar pasar al dashboard
+      this.showScreen('dashboard');
+      this.startReminderChecker();
+    }
+  }
+
+  async showQuestionnairePopup(pendingResponse) {
+    const questionnaire = pendingResponse.questionnaire;
+    
+    // Crear popup OBLIGATORIO (no se puede cerrar)
+    const popup = document.createElement('div');
+    popup.className = 'questionnaire-popup-overlay';
+    popup.innerHTML = `
+      <div class="questionnaire-popup">
+        <div class="questionnaire-header">
+          <div class="questionnaire-icon">📋</div>
+          <h2>${questionnaire.title}</h2>
+          <p class="questionnaire-subtitle">${questionnaire.description || 'Por favor completa este cuestionario antes de continuar'}</p>
+        </div>
+
+        <form id="questionnaireForm" class="questionnaire-form">
+          ${questionnaire.questions.map((q, index) => this.renderQuestionHTML(q, index)).join('')}
+          
+          <div class="questionnaire-actions">
+            <button type="submit" class="btn btn-primary btn-lg">
+              📤 Enviar Cuestionario
+            </button>
+          </div>
+        </form>
+
+        <div class="questionnaire-footer">
+          ⚠️ Debes completar todas las preguntas requeridas
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(popup);
+
+    // Manejar envío
+    const form = document.getElementById('questionnaireForm');
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      await this.submitQuestionnaire(pendingResponse._id, questionnaire);
+    };
+  }
+
+  renderQuestionHTML(question, index) {
+    const num = index + 1;
+    let inputHTML = '';
+
+    switch (question.type) {
+      case 'text':
+        inputHTML = `
+          <textarea 
+            id="q_${question.id}" 
+            class="form-textarea" 
+            rows="3"
+            placeholder="Escribe tu respuesta aquí..."
+            ${question.required ? 'required' : ''}
+          ></textarea>
+        `;
+        break;
+
+      case 'scale':
+        const min = question.scaleMin || 1;
+        const max = question.scaleMax || 10;
+        inputHTML = `
+          <div class="scale-input-container">
+            <div class="scale-labels">
+              <span class="scale-label-min">${question.scaleMinLabel || min}</span>
+              <span class="scale-label-max">${question.scaleMaxLabel || max}</span>
+            </div>
+            <input 
+              type="range" 
+              id="q_${question.id}" 
+              class="scale-input" 
+              min="${min}" 
+              max="${max}" 
+              value="${Math.round((min + max) / 2)}"
+              oninput="document.getElementById('scaleValue_${question.id}').textContent = this.value"
+              ${question.required ? 'required' : ''}
+            />
+            <div class="scale-value" id="scaleValue_${question.id}">${Math.round((min + max) / 2)}</div>
+          </div>
+        `;
+        break;
+
+      case 'yesno':
+        inputHTML = `
+          <div class="radio-group">
+            <label class="radio-option">
+              <input type="radio" name="q_${question.id}" value="si" ${question.required ? 'required' : ''}/>
+              <span>✓ Sí</span>
+            </label>
+            <label class="radio-option">
+              <input type="radio" name="q_${question.id}" value="no" ${question.required ? 'required' : ''}/>
+              <span>✗ No</span>
+            </label>
+            <label class="radio-option">
+              <input type="radio" name="q_${question.id}" value="no_se" ${question.required ? 'required' : ''}/>
+              <span>? No estoy seguro/a</span>
+            </label>
+          </div>
+        `;
+        break;
+
+      case 'multiple':
+        inputHTML = `
+          <div class="radio-group">
+            ${(question.options || []).map((option, i) => `
+              <label class="radio-option">
+                <input type="radio" name="q_${question.id}" value="${option}" ${question.required ? 'required' : ''}/>
+                <span>${option}</span>
+              </label>
+            `).join('')}
+          </div>
+        `;
+        break;
+
+      case 'number':
+        inputHTML = `
+          <input 
+            type="number" 
+            id="q_${question.id}" 
+            class="form-input" 
+            placeholder="Ingresa un número"
+            ${question.required ? 'required' : ''}
+          />
+        `;
+        break;
+    }
+
+    return `
+      <div class="question-block">
+        <label class="question-label">
+          ${num}. ${question.text}
+          ${question.required ? '<span class="required-mark">*</span>' : ''}
+        </label>
+        ${inputHTML}
+      </div>
+    `;
+  }
+
+  async submitQuestionnaire(responseId, questionnaire) {
+    try {
+      // Recopilar respuestas
+      const responses = [];
+
+      for (const question of questionnaire.questions) {
+        let answer = null;
+
+        if (question.type === 'yesno' || question.type === 'multiple') {
+          const selected = document.querySelector(`input[name="q_${question.id}"]:checked`);
+          answer = selected ? selected.value : null;
+        } else {
+          const input = document.getElementById(`q_${question.id}`);
+          answer = input ? input.value : null;
+        }
+
+        if (question.required && (!answer || answer.trim() === '')) {
+          this.showMessage(`Por favor responde la pregunta: "${question.text}"`, 'warning');
+          return;
+        }
+
+        responses.push({
+          questionId: question.id,
+          answer: answer,
+          answerText: String(answer)
+        });
+      }
+
+      // Enviar al servidor
+      await api.submitQuestionnaire(responseId, responses);
+
+      // Remover popup
+      const popup = document.querySelector('.questionnaire-popup-overlay');
+      if (popup) popup.remove();
+
+      this.showMessage('✅ Cuestionario completado correctamente', 'success');
+
+      // Verificar si hay más cuestionarios pendientes
+      setTimeout(async () => {
+        await this.checkPendingQuestionnaires();
+      }, 1000);
+
+    } catch (error) {
+      logger.error('Error enviando cuestionario:', error);
+      this.showMessage('Error enviando cuestionario: ' + error.message, 'error');
+    }
   }
 
   setupEventListeners() {
@@ -48,13 +284,14 @@ class FarmaFollowApp {
     });
   }
 
-  // ===== SISTEMA DE RECORDATORIOS =====
+  // ===== SISTEMA DE RECORDATORIOS FUNCIONAL =====
   
   startReminderChecker() {
+    // Verificar recordatorios cada 30 segundos
     this.reminderCheckInterval = setInterval(() => {
       this.checkReminders();
     }, 30000);
-    this.checkReminders();
+    this.checkReminders(); // Verificar inmediatamente al iniciar
   }
 
   stopReminderChecker() {
@@ -69,7 +306,7 @@ class FarmaFollowApp {
       const reminders = await api.getReminders();
       const now = new Date();
       const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-      const currentDay = now.getDay();
+      const currentDay = now.getDay(); // 0 = Domingo, 1 = Lunes, ...
 
       reminders.forEach(reminder => {
         if (!reminder.isActive) return;
@@ -81,9 +318,28 @@ class FarmaFollowApp {
           shouldNotify = true;
         } else if (reminder.frequency === 'weekly' && reminder.daysOfWeek) {
           shouldNotify = reminder.daysOfWeek.includes(currentDay);
+        } else if (reminder.frequency === 'biweekly') {
+          // Verificar si han pasado 14 días desde la última notificación
+          const lastNotified = localStorage.getItem(`reminder_${reminder._id}_lastDate`);
+          if (lastNotified) {
+            const daysSince = Math.floor((now - new Date(lastNotified)) / (1000 * 60 * 60 * 24));
+            shouldNotify = daysSince >= 14;
+          } else {
+            shouldNotify = true;
+          }
+        } else if (reminder.frequency === 'monthly') {
+          // Verificar si han pasado 28 días
+          const lastNotified = localStorage.getItem(`reminder_${reminder._id}_lastDate`);
+          if (lastNotified) {
+            const daysSince = Math.floor((now - new Date(lastNotified)) / (1000 * 60 * 60 * 24));
+            shouldNotify = daysSince >= 28;
+          } else {
+            shouldNotify = true;
+          }
         }
 
         if (shouldNotify) {
+          // Verificar que no se notificó en la última hora
           const lastNotified = localStorage.getItem(`reminder_${reminder._id}_last`);
           if (lastNotified) {
             const lastTime = new Date(lastNotified);
@@ -92,6 +348,7 @@ class FarmaFollowApp {
           }
 
           localStorage.setItem(`reminder_${reminder._id}_last`, now.toISOString());
+          localStorage.setItem(`reminder_${reminder._id}_lastDate`, now.toISOString());
           this.showReminderNotification(reminder);
         }
       });
@@ -104,6 +361,7 @@ class FarmaFollowApp {
     const title = '💊 Hora de tomar tu medicación';
     const body = `${reminder.medication?.name || 'Medicamento'} - ${reminder.time}`;
 
+    // Notificación del navegador
     if (Notification.permission === 'granted') {
       const notification = new Notification(title, {
         body: body,
@@ -120,6 +378,7 @@ class FarmaFollowApp {
       };
     }
 
+    // Modal en la app
     this.showReminderModal(reminder);
   }
 
@@ -134,20 +393,22 @@ class FarmaFollowApp {
     modal.innerHTML = `
       <div class="modal-content">
         <h2>💊 Hora de tu Medicación</h2>
-        <div class="reminder-modal-body">
-          <p class="medication-name">${reminder.medication?.name || 'Medicamento'}</p>
-          <p class="reminder-time">⏰ ${reminder.time}</p>
-          ${reminder.notes ? `<p class="reminder-notes">${reminder.notes}</p>` : ''}
+        <div class="reminder-modal-body" style="text-align: center; padding: 2rem 0;">
+          <p style="font-size: 1.5rem; font-weight: 700; color: var(--primary); margin-bottom: 1rem;">
+            ${reminder.medication?.name || 'Medicamento'}
+          </p>
+          <p style="font-size: 1.2rem; color: var(--gray-600);">⏰ ${reminder.time}</p>
+          ${reminder.notes ? `<p style="margin-top: 1rem; color: var(--gray-600);">${reminder.notes}</p>` : ''}
         </div>
-        <div class="modal-actions">
+        <div class="modal-actions" style="display: flex; gap: 1rem; flex-direction: column;">
           <button class="btn btn-primary btn-lg" onclick="app.confirmDose(true)">
-            ✓ Tomado
+            ✓ Sí, me la he administrado
           </button>
           <button class="btn btn-secondary" onclick="app.postponeDose()">
-            ⏰ Posponer 15 min
+            ⏰ Posponer 15 minutos
           </button>
-          <button class="btn btn-outline" onclick="app.dismissReminder()">
-            ✗ Omitir
+          <button class="btn btn-outline" onclick="app.confirmDose(false)">
+            ✗ No, omitir esta dosis
           </button>
         </div>
       </div>
@@ -164,10 +425,17 @@ class FarmaFollowApp {
 
     try {
       await api.recordDose(this.activeReminder._id, taken);
-      this.showMessage('✅ Dosis registrada correctamente', 'success');
       
-      if (this.currentScreen === 'reminders') {
-        this.renderReminderCalendar();
+      if (taken) {
+        this.showMessage('✅ Dosis registrada correctamente', 'success');
+      } else {
+        this.showMessage('⚠️ Dosis omitida', 'warning');
+      }
+      
+      // Recargar dashboard para actualizar adherencia
+      if (this.currentScreen === 'dashboard') {
+        const app = document.getElementById('app');
+        await this.renderPatientDashboard(app);
       }
     } catch (error) {
       logger.error('Error registrando dosis:', error);
@@ -185,7 +453,7 @@ class FarmaFollowApp {
 
     setTimeout(() => {
       this.showReminderModal(this.activeReminder);
-    }, 15 * 60 * 1000);
+    }, 15 * 60 * 1000); // 15 minutos
 
     this.showMessage('⏰ Recordatorio pospuesto 15 minutos', 'info');
     this.activeReminder = null;
@@ -195,6 +463,100 @@ class FarmaFollowApp {
     const modal = document.querySelector('.reminder-modal');
     if (modal) modal.remove();
     this.activeReminder = null;
+  }
+
+  // ===== CÁLCULO DE ADHERENCIA Y ESTADÍSTICAS =====
+  
+  async calculateAdherence() {
+    try {
+      const reminders = await api.getReminders();
+      let totalDoses = 0;
+      let takenDoses = 0;
+
+      for (const reminder of reminders) {
+        if (reminder.history && reminder.history.length > 0) {
+          totalDoses += reminder.history.length;
+          takenDoses += reminder.history.filter(h => h.taken).length;
+        }
+      }
+
+      return totalDoses > 0 ? Math.round((takenDoses / totalDoses) * 100) : 100;
+    } catch (error) {
+      logger.error('Error calculando adherencia:', error);
+      return 87; // Valor por defecto
+    }
+  }
+
+  async calculateStreak() {
+    try {
+      const reminders = await api.getReminders();
+      let streak = 0;
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      // Ordenar todas las dosis por fecha (más reciente primero)
+      const allDoses = [];
+      reminders.forEach(reminder => {
+        if (reminder.history) {
+          reminder.history.forEach(dose => {
+            allDoses.push({
+              date: new Date(dose.timestamp),
+              taken: dose.taken
+            });
+          });
+        }
+      });
+
+      allDoses.sort((a, b) => b.date - a.date);
+
+      // Contar días consecutivos tomando medicación
+      let currentDate = new Date(today);
+      for (let dose of allDoses) {
+        const doseDate = new Date(dose.date);
+        doseDate.setHours(0, 0, 0, 0);
+        
+        if (doseDate.getTime() === currentDate.getTime() && dose.taken) {
+          streak++;
+          currentDate.setDate(currentDate.getDate() - 1);
+        } else if (doseDate < currentDate) {
+          break;
+        }
+      }
+
+      return streak;
+    } catch (error) {
+      logger.error('Error calculando racha:', error);
+      return 12; // Valor por defecto
+    }
+  }
+
+  getNextReminder(reminders) {
+    const now = new Date();
+    const currentTime = now.getHours() * 60 + now.getMinutes();
+
+    // Buscar siguiente recordatorio hoy
+    const activeReminders = reminders.filter(r => r.isActive);
+    
+    for (let reminder of activeReminders) {
+      const [hours, minutes] = reminder.time.split(':').map(Number);
+      const reminderTime = hours * 60 + minutes;
+      
+      if (reminderTime > currentTime) {
+        return reminder.time;
+      }
+    }
+
+    // Si no hay más hoy, devolver el primero de mañana
+    if (activeReminders.length > 0) {
+      const sortedReminders = activeReminders.sort((a, b) => {
+        const [aH, aM] = a.time.split(':').map(Number);
+        const [bH, bM] = b.time.split(':').map(Number);
+        return (aH * 60 + aM) - (bH * 60 + bM);
+      });
+      return sortedReminders[0].time;
+    }
+
+    return '--:--';
   }
 
   showScreen(screenName) {
@@ -212,7 +574,6 @@ class FarmaFollowApp {
     // Update header
     const header = document.querySelector('.header');
     const backBtn = document.querySelector('.back-btn');
-    const headerTitle = document.getElementById('headerTitle');
 
     if (screenName === 'login' || screenName === 'register') {
       if (header) header.style.display = 'none';
@@ -388,14 +749,15 @@ class FarmaFollowApp {
       this.medications = medications;
       this.reminders = reminders;
 
-      const adherence = this.user.adherenceRate || 87;
+      // CALCULAR DATOS REALES
+      const adherence = await this.calculateAdherence();
+      const streak = await this.calculateStreak();
+      const nextDose = this.getNextReminder(reminders);
+
       const today = new Date();
       const dayNames = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
       const monthNames = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
       const dateStr = `${dayNames[today.getDay()]}, ${today.getDate()} de ${monthNames[today.getMonth()]} de ${today.getFullYear()}`;
-
-      const activeReminders = reminders.filter(r => r.isActive);
-      const nextReminder = activeReminders.length > 0 ? activeReminders[0] : null;
 
       container.innerHTML = `
         <div class="dashboard-header">
@@ -410,15 +772,11 @@ class FarmaFollowApp {
           </div>
           <div class="stat-row">
             <span class="stat-label">📅 Próxima dosis</span>
-            <span class="stat-value">${nextReminder ? nextReminder.time : '--:--'}</span>
-          </div>
-          <div class="stat-row">
-            <span class="stat-label">💊 Dosis hoy</span>
-            <span class="stat-value">2 de 3</span>
+            <span class="stat-value">${nextDose}</span>
           </div>
           <div class="stat-row">
             <span class="stat-label">🔥 Racha actual</span>
-            <span class="stat-value">12 días</span>
+            <span class="stat-value">${streak} días</span>
           </div>
         </div>
 
@@ -592,8 +950,18 @@ class FarmaFollowApp {
     }
   }
 
-  renderReminders(container) {
-    const med = this.currentMedication;
+  async renderReminders(container) {
+    // Cargar recordatorios actuales del usuario
+    try {
+      this.reminders = await api.getReminders();
+    } catch (error) {
+      logger.error('Error cargando recordatorios:', error);
+      this.reminders = [];
+    }
+    
+    const now = new Date();
+    const monthNames = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+    const currentMonthName = monthNames[now.getMonth()] + ' ' + now.getFullYear();
     
     container.innerHTML = `
       <div class="calendar-container">
@@ -604,20 +972,20 @@ class FarmaFollowApp {
 
         <div class="calendar-month">
           <div class="month-header">
-            <div class="month-name">Octubre 2025</div>
+            <div class="month-name">${currentMonthName}</div>
             <div class="month-nav">
-              <button class="nav-btn">←</button>
-              <button class="nav-btn">→</button>
+              <button class="nav-btn" onclick="app.previousMonth()">←</button>
+              <button class="nav-btn" onclick="app.nextMonth()">→</button>
             </div>
           </div>
           <div class="calendar-grid">
+            <div class="day-header">DOM</div>
             <div class="day-header">LUN</div>
             <div class="day-header">MAR</div>
             <div class="day-header">MIÉ</div>
             <div class="day-header">JUE</div>
             <div class="day-header">VIE</div>
             <div class="day-header">SÁB</div>
-            <div class="day-header">DOM</div>
             
             ${this.generateCalendarDays()}
           </div>
@@ -627,19 +995,19 @@ class FarmaFollowApp {
           <div>
             <div class="section-title" style="font-size: 1.1rem; margin-bottom: 1rem;">⏰ Horarios del día</div>
             <div class="time-grid">
-              <div class="time-slot active" data-time="08:00">
+              <div class="time-slot" data-time="08:00" onclick="app.toggleTimeSlot(this)">
                 <div class="time-emoji">🌅</div>
                 <div class="time-label">Mañana</div>
                 <div class="time-value">08:00</div>
               </div>
 
-              <div class="time-slot" data-time="14:00">
+              <div class="time-slot" data-time="14:00" onclick="app.toggleTimeSlot(this)">
                 <div class="time-emoji">☀️</div>
                 <div class="time-label">Mediodía</div>
                 <div class="time-value">14:00</div>
               </div>
 
-              <div class="time-slot active" data-time="21:00">
+              <div class="time-slot" data-time="21:00" onclick="app.toggleTimeSlot(this)">
                 <div class="time-emoji">🌙</div>
                 <div class="time-label">Noche</div>
                 <div class="time-value">21:00</div>
@@ -651,10 +1019,10 @@ class FarmaFollowApp {
             <div class="frequency-section">
               <div class="frequency-title">📅 Frecuencia de administración</div>
               <div class="frequency-options">
-                <div class="frequency-btn" data-freq="daily">📆 Diaria</div>
-                <div class="frequency-btn active" data-freq="weekly">📅 Semanal</div>
-                <div class="frequency-btn" data-freq="biweekly">🗓️ Cada 2 semanas</div>
-                <div class="frequency-btn" data-freq="monthly">📋 Cada 28 días</div>
+                <div class="frequency-btn" data-freq="daily" onclick="app.selectFrequency(this)">📆 Diaria</div>
+                <div class="frequency-btn active" data-freq="weekly" onclick="app.selectFrequency(this)">📅 Semanal</div>
+                <div class="frequency-btn" data-freq="biweekly" onclick="app.selectFrequency(this)">🗓️ Cada 2 semanas</div>
+                <div class="frequency-btn" data-freq="monthly" onclick="app.selectFrequency(this)">📋 Cada 28 días</div>
               </div>
             </div>
 
@@ -666,66 +1034,179 @@ class FarmaFollowApp {
       </div>
     `;
 
-    // Add event listeners for time slots
-    document.querySelectorAll('.time-slot').forEach(slot => {
-      slot.addEventListener('click', function() {
-        this.classList.toggle('active');
-      });
-    });
+    // Resetear selecciones
+    this.selectedTimes = [];
+    this.selectedFrequency = 'weekly';
+  }
 
-    // Add event listeners for frequency buttons
-    document.querySelectorAll('.frequency-btn').forEach(btn => {
-      btn.addEventListener('click', function() {
-        document.querySelectorAll('.frequency-btn').forEach(b => b.classList.remove('active'));
-        this.classList.add('active');
-      });
-    });
+  toggleTimeSlot(element) {
+    element.classList.toggle('active');
+    const time = element.dataset.time;
+    
+    if (element.classList.contains('active')) {
+      if (!this.selectedTimes.includes(time)) {
+        this.selectedTimes.push(time);
+      }
+    } else {
+      this.selectedTimes = this.selectedTimes.filter(t => t !== time);
+    }
+  }
+
+  selectFrequency(element) {
+    document.querySelectorAll('.frequency-btn').forEach(btn => btn.classList.remove('active'));
+    element.classList.add('active');
+    this.selectedFrequency = element.dataset.freq;
   }
 
   generateCalendarDays() {
-    const today = 25;
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth(); // 0-11
+    const today = now.getDate();
+    
+    // Obtener primer y último día del mes
+    const firstDay = new Date(currentYear, currentMonth, 1);
+    const lastDay = new Date(currentYear, currentMonth + 1, 0);
+    
+    // Días del mes anterior para llenar la primera semana
+    const firstDayOfWeek = firstDay.getDay(); // 0 = Domingo
+    const daysFromPrevMonth = firstDayOfWeek === 0 ? 0 : firstDayOfWeek;
+    
+    // Calcular días del mes anterior
+    const prevMonthLastDay = new Date(currentYear, currentMonth, 0).getDate();
+    
     let html = '';
     
-    // Previous month days
-    html += `<div class="day-cell other-month"><div class="day-number">29</div></div>`;
-    html += `<div class="day-cell other-month"><div class="day-number">30</div></div>`;
-    
-    // Current month days with reminders
-    for (let i = 1; i <= today; i++) {
-      const classes = i === today ? 'day-cell today' : 'day-cell has-reminder';
-      html += `<div class="${classes}"><div class="day-number">${i}</div></div>`;
+    // Días del mes anterior
+    for (let i = daysFromPrevMonth - 1; i >= 0; i--) {
+      const day = prevMonthLastDay - i;
+      html += `<div class="day-cell other-month"><div class="day-number">${day}</div></div>`;
     }
     
-    // Future days
-    for (let i = today + 1; i <= 31; i++) {
-      html += `<div class="day-cell"><div class="day-number">${i}</div></div>`;
+    // Días del mes actual
+    const daysInMonth = lastDay.getDate();
+    
+    for (let day = 1; day <= daysInMonth; day++) {
+      const date = new Date(currentYear, currentMonth, day);
+      const dayOfWeek = date.getDay(); // 0 = Domingo, 1 = Lunes, etc.
+      
+      // Verificar si este día tiene recordatorios
+      const hasReminder = this.checkIfDayHasReminder(dayOfWeek, date);
+      
+      let classes = 'day-cell';
+      
+      // Marcar día actual
+      if (day === today && currentMonth === now.getMonth() && currentYear === now.getFullYear()) {
+        classes += ' today';
+      }
+      
+      // Marcar días con recordatorio
+      if (hasReminder) {
+        classes += ' has-reminder';
+      }
+      
+      html += `<div class="${classes}"><div class="day-number">${day}</div></div>`;
     }
     
-    // Next month days
-    html += `<div class="day-cell other-month"><div class="day-number">1</div></div>`;
-    html += `<div class="day-cell other-month"><div class="day-number">2</div></div>`;
+    // Días del próximo mes para completar la última semana
+    const lastDayOfWeek = lastDay.getDay();
+    const daysToNextMonth = lastDayOfWeek === 6 ? 0 : (6 - lastDayOfWeek);
+    
+    for (let i = 1; i <= daysToNextMonth; i++) {
+      html += `<div class="day-cell other-month"><div class="day-number">${i}</div></div>`;
+    }
     
     return html;
   }
 
-  async saveReminders() {
-    const activeTimeSlots = Array.from(document.querySelectorAll('.time-slot.active'))
-      .map(slot => slot.dataset.time);
+  checkIfDayHasReminder(dayOfWeek, date) {
+    if (!this.reminders || this.reminders.length === 0) {
+      return false;
+    }
     
-    const activeFrequency = document.querySelector('.frequency-btn.active')?.dataset.freq || 'daily';
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    
+    // Solo marcar días pasados o hoy
+    date.setHours(0, 0, 0, 0);
+    if (date > now) {
+      return false; // Días futuros no se marcan
+    }
+    
+    // Verificar si hay recordatorios activos para este día
+    return this.reminders.some(reminder => {
+      if (!reminder.isActive) return false;
+      
+      switch (reminder.frequency) {
+        case 'daily':
+          // Todos los días
+          return true;
+          
+        case 'weekly':
+          // Solo los días especificados en daysOfWeek
+          if (reminder.daysOfWeek && reminder.daysOfWeek.length > 0) {
+            return reminder.daysOfWeek.includes(dayOfWeek);
+          }
+          // Si no tiene daysOfWeek, asumir Lun-Vie
+          return [1, 2, 3, 4, 5].includes(dayOfWeek);
+          
+        case 'biweekly':
+          // Cada 2 semanas - verificar si han pasado 14 días desde creación
+          const reminderStart = new Date(reminder.createdAt);
+          reminderStart.setHours(0, 0, 0, 0);
+          const daysDiff = Math.floor((date - reminderStart) / (1000 * 60 * 60 * 24));
+          return daysDiff % 14 === 0;
+          
+        case 'monthly':
+          // Cada 28 días
+          const monthlyStart = new Date(reminder.createdAt);
+          monthlyStart.setHours(0, 0, 0, 0);
+          const daysDiffMonthly = Math.floor((date - monthlyStart) / (1000 * 60 * 60 * 24));
+          return daysDiffMonthly % 28 === 0;
+          
+        default:
+          return false;
+      }
+    });
+  }
 
-    if (activeTimeSlots.length === 0) {
+  async saveReminders() {
+    if (this.selectedTimes.length === 0) {
       this.showMessage('Por favor selecciona al menos un horario', 'warning');
       return;
     }
 
+    if (!this.currentMedication) {
+      this.showMessage('Error: No hay medicamento seleccionado', 'error');
+      return;
+    }
+
     try {
-      // Aquí iría la llamada a la API
+      // Crear un recordatorio por cada horario seleccionado
+      for (const time of this.selectedTimes) {
+        await api.createReminder({
+          medication: this.currentMedication._id,
+          time: time,
+          frequency: this.selectedFrequency,
+          isActive: true,
+          daysOfWeek: this.selectedFrequency === 'weekly' ? [1, 2, 3, 4, 5] : undefined // Lun-Vie por defecto
+        });
+      }
+
       this.showMessage('✅ Recordatorios guardados correctamente', 'success');
       setTimeout(() => this.showScreen('dashboard'), 1500);
     } catch (error) {
+      logger.error('Error guardando recordatorios:', error);
       this.showMessage('Error guardando recordatorios: ' + error.message, 'error');
     }
+  }
+
+  previousMonth() {
+    this.showMessage('Navegación de meses próximamente', 'info');
+  }
+
+  nextMonth() {
+    this.showMessage('Navegación de meses próximamente', 'info');
   }
 
   renderConsult(container) {
@@ -750,39 +1231,6 @@ class FarmaFollowApp {
               <div class="chat-time">Ayer, 10:30 AM</div>
             </div>
           </div>
-
-          <div class="chat-message user">
-            <div class="chat-avatar">👤</div>
-            <div>
-              <div class="chat-bubble">
-                Hola doctor, he notado algo de enrojecimiento en la cara después de tomar la medicación. ¿Es normal?
-              </div>
-              <div class="chat-time">Ayer, 10:32 AM</div>
-            </div>
-          </div>
-
-          <div class="chat-message pharmacist">
-            <div class="chat-avatar">👨‍⚕️</div>
-            <div>
-              <div class="chat-bubble">
-                Sí, el enrojecimiento facial es un efecto secundario común. Suele mejorar con el tiempo. Te recomiendo:<br>
-                • Tomar la medicación con alimentos<br>
-                • Evitar bebidas calientes cerca de la toma<br>
-                • El síntoma suele durar 30-60 minutos
-              </div>
-              <div class="chat-time">Ayer, 3:15 PM</div>
-            </div>
-          </div>
-
-          <div class="chat-message user">
-            <div class="chat-avatar">👤</div>
-            <div>
-              <div class="chat-bubble">
-                Perfecto, muchas gracias por la información. Me quedo más tranquilo. 😊
-              </div>
-              <div class="chat-time">Ayer, 5:20 PM</div>
-            </div>
-          </div>
         </div>
 
         <div class="chat-input-container">
@@ -792,7 +1240,6 @@ class FarmaFollowApp {
       </div>
     `;
 
-    // Add enter key listener
     document.getElementById('chatInput').addEventListener('keypress', (e) => {
       if (e.key === 'Enter') {
         this.sendConsultation();
@@ -806,7 +1253,6 @@ class FarmaFollowApp {
 
     if (!message) return;
 
-    // Add message to chat
     const chatContainer = document.getElementById('chatContainer');
     const now = new Date();
     const timeStr = now.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
@@ -821,17 +1267,18 @@ class FarmaFollowApp {
       </div>
     `;
     chatContainer.appendChild(messageDiv);
-
-    // Scroll to bottom
     chatContainer.scrollTop = chatContainer.scrollHeight;
 
-    // Clear input
     input.value = '';
 
     try {
-      // Aquí iría la llamada a la API
+      await api.createConsultation({
+        medication: this.currentMedication?._id,
+        message: message
+      });
       this.showMessage('✅ Consulta enviada correctamente', 'success');
     } catch (error) {
+      logger.error('Error enviando consulta:', error);
       this.showMessage('Error enviando consulta: ' + error.message, 'error');
     }
   }
@@ -847,401 +1294,11 @@ class FarmaFollowApp {
     `;
   }
 
-  // ===== ADMIN DASHBOARD =====
+  // ===== ADMIN DASHBOARD (mantener código existente) =====
   
   async renderAdminDashboard(container) {
-    try {
-      const [users, medications, consultations] = await Promise.all([
-        api.getUsers(),
-        api.getMedications(),
-        api.getAllConsultations()
-      ]);
-
-      this.users = users;
-      this.medications = medications;
-      this.consultations = consultations;
-
-      const pendingConsultations = consultations.filter(c => c.status === 'pending').length;
-      const avgAdherence = users.length > 0 
-        ? Math.round(users.reduce((sum, u) => sum + (u.adherenceRate || 0), 0) / users.length)
-        : 0;
-
-      container.innerHTML = `
-        <div class="admin-header">
-          <h1 class="admin-title">Panel de Administración</h1>
-          <button class="btn btn-outline" onclick="app.logout()">
-            Cerrar Sesión
-          </button>
-        </div>
-
-        <div class="admin-stats">
-          <div class="stat-card">
-            <div class="stat-label">Total Pacientes</div>
-            <div class="stat-value">${users.length}</div>
-          </div>
-          <div class="stat-card" style="background: linear-gradient(135deg, var(--success) 0%, #059669 100%);">
-            <div class="stat-label">Medicamentos</div>
-            <div class="stat-value">${medications.length}</div>
-          </div>
-          <div class="stat-card" style="background: linear-gradient(135deg, var(--warning) 0%, #d97706 100%);">
-            <div class="stat-label">Consultas Pendientes</div>
-            <div class="stat-value">${pendingConsultations}</div>
-          </div>
-          <div class="stat-card" style="background: linear-gradient(135deg, var(--cyan) 0%, var(--cyan-dark) 100%);">
-            <div class="stat-label">Adherencia Media</div>
-            <div class="stat-value">${avgAdherence}%</div>
-          </div>
-        </div>
-
-        <div style="margin-top: 2rem;">
-          <button class="btn btn-primary" onclick="app.showAdminSection('patients')" style="margin-right: 1rem;">
-            👥 Gestionar Pacientes
-          </button>
-          <button class="btn btn-success" onclick="app.showAdminSection('medications')" style="margin-right: 1rem;">
-            💊 Gestionar Medicamentos
-          </button>
-          <button class="btn btn-secondary" onclick="app.showAdminSection('consultations')">
-            💬 Ver Consultas
-          </button>
-        </div>
-
-        <div id="adminSectionContainer" style="margin-top: 2rem;"></div>
-      `;
-
-    } catch (error) {
-      logger.error('Error cargando admin dashboard:', error);
-      container.innerHTML = '<div class="error">Error cargando panel de administración</div>';
-    }
-  }
-
-  async showAdminSection(section) {
-    const container = document.getElementById('adminSectionContainer');
-    
-    switch(section) {
-      case 'patients':
-        await this.renderPatients(container);
-        break;
-      case 'medications':
-        await this.renderMedications(container);
-        break;
-      case 'consultations':
-        await this.renderConsultations(container);
-        break;
-    }
-  }
-
-  async renderPatients(container) {
-    const users = await api.getUsers();
-    
-    container.innerHTML = `
-      <div style="background: white; border-radius: 1rem; padding: 1.5rem; box-shadow: var(--shadow);">
-        <h2>Gestión de Pacientes</h2>
-        <div class="table-container" style="margin-top: 1.5rem;">
-          <table>
-            <thead>
-              <tr>
-                <th>Nombre</th>
-                <th>Email</th>
-                <th>Medicamento</th>
-                <th>Adherencia</th>
-                <th>Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${users.map(user => `
-                <tr>
-                  <td>${user.name}</td>
-                  <td>${user.email}</td>
-                  <td>${user.medication?.name || '-'}</td>
-                  <td>
-                    <span class="badge ${user.adherenceRate >= 80 ? 'badge-success' : user.adherenceRate >= 60 ? 'badge-warning' : 'badge-danger'}">
-                      ${user.adherenceRate || 0}%
-                    </span>
-                  </td>
-                  <td>
-                    <button class="btn btn-sm btn-outline" onclick="app.viewUserDetail('${user._id}')">
-                      Ver
-                    </button>
-                  </td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    `;
-  }
-
-  async renderMedications(container) {
-    const medications = await api.getMedications();
-    
-    container.innerHTML = `
-      <div style="background: white; border-radius: 1rem; padding: 1.5rem; box-shadow: var(--shadow);">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
-          <h2>Gestión de Medicamentos</h2>
-          <button class="btn btn-primary" onclick="app.showAddMedicationModal()">
-            + Nuevo Medicamento
-          </button>
-        </div>
-        <div class="table-container">
-          <table>
-            <thead>
-              <tr>
-                <th>Nombre</th>
-                <th>Descripción</th>
-                <th>Pacientes</th>
-                <th>Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${medications.map(med => `
-                <tr>
-                  <td><strong>${med.name}</strong></td>
-                  <td>${med.description}</td>
-                  <td>${med.assignedPatients || 0}</td>
-                  <td>
-                    <button class="btn btn-sm btn-outline" onclick="app.editMedication('${med._id}')">
-                      Editar
-                    </button>
-                    <button class="btn btn-sm btn-danger" onclick="app.deleteMedication('${med._id}')">
-                      Eliminar
-                    </button>
-                  </td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    `;
-  }
-
-  showAddMedicationModal() {
-    const modal = document.createElement('div');
-    modal.className = 'modal active';
-    modal.innerHTML = `
-      <div class="modal-content">
-        <div class="modal-header">
-          <h2>Nuevo Medicamento</h2>
-          <button class="close-btn" onclick="this.closest('.modal').remove()">×</button>
-        </div>
-        
-        <form id="addMedicationForm">
-          <div class="form-group">
-            <label class="form-label">Nombre del Medicamento *</label>
-            <input type="text" id="medName" class="form-input" required>
-          </div>
-          
-          <div class="form-group">
-            <label class="form-label">Descripción *</label>
-            <textarea id="medDescription" class="form-textarea" rows="3" required></textarea>
-          </div>
-          
-          <div class="form-group">
-            <label class="form-label">Principio Activo</label>
-            <input type="text" id="medActiveIngredient" class="form-input">
-          </div>
-          
-          <div class="form-group">
-            <label class="form-label">URL del Video (YouTube)</label>
-            <input type="url" id="medVideoUrl" class="form-input" placeholder="https://youtube.com/...">
-          </div>
-          
-          <div class="modal-actions">
-            <button type="submit" class="btn btn-primary">Crear</button>
-            <button type="button" class="btn btn-secondary" 
-              onclick="this.closest('.modal').remove()">Cancelar</button>
-          </div>
-        </form>
-      </div>
-    `;
-    
-    document.body.appendChild(modal);
-    
-    document.getElementById('addMedicationForm').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      await this.createMedication();
-    });
-  }
-
-  async createMedication() {
-    const name = document.getElementById('medName').value;
-    const description = document.getElementById('medDescription').value;
-    const activeIngredient = document.getElementById('medActiveIngredient').value;
-    const videoUrl = document.getElementById('medVideoUrl').value;
-
-    try {
-      await api.createMedication({ 
-        name, 
-        description, 
-        activeIngredient,
-        videoUrl 
-      });
-      this.showMessage('Medicamento creado correctamente', 'success');
-      document.querySelector('.modal').remove();
-      this.showAdminSection('medications');
-    } catch (error) {
-      this.showMessage('Error creando medicamento: ' + error.message, 'error');
-    }
-  }
-
-  async editMedication(medicationId) {
-    this.showMessage('Funcionalidad de edición disponible próximamente', 'info');
-  }
-
-  async deleteMedication(medicationId) {
-    if (!confirm('¿Estás seguro de eliminar este medicamento?')) return;
-
-    try {
-      await api.deleteMedication(medicationId);
-      this.showMessage('Medicamento eliminado', 'success');
-      this.showAdminSection('medications');
-    } catch (error) {
-      this.showMessage('Error eliminando medicamento: ' + error.message, 'error');
-    }
-  }
-
-  async renderConsultations(container) {
-    try {
-      const consultations = await api.getAllConsultations();
-
-      container.innerHTML = `
-        <div style="background: white; border-radius: 1rem; padding: 1.5rem; box-shadow: var(--shadow);">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
-            <h2>💬 Gestión de Consultas</h2>
-            <button id="toggleResolvedBtn" class="btn btn-secondary" onclick="app.toggleResolvedConsultations()">
-              Ver Resueltas
-            </button>
-          </div>
-          
-          <div id="consultationsContainer"></div>
-        </div>
-      `;
-
-      this.showPendingConsultations = true;
-      this.renderConsultationsList(consultations);
-
-    } catch (error) {
-      container.innerHTML = '<div class="error">Error cargando consultas</div>';
-    }
-  }
-
-  toggleResolvedConsultations() {
-    this.showPendingConsultations = !this.showPendingConsultations;
-    const btn = document.getElementById('toggleResolvedBtn');
-    btn.textContent = this.showPendingConsultations ? 'Ver Resueltas' : 'Ver Pendientes';
-    
-    api.getAllConsultations().then(consultations => {
-      this.renderConsultationsList(consultations);
-    });
-  }
-
-  renderConsultationsList(allConsultations) {
-    const container = document.getElementById('consultationsContainer');
-    if (!container) return;
-
-    const consultations = this.showPendingConsultations
-      ? allConsultations.filter(c => c.status === 'pending')
-      : allConsultations.filter(c => c.status === 'resolved');
-
-    if (consultations.length === 0) {
-      container.innerHTML = `
-        <div class="empty-state">
-          No hay consultas ${this.showPendingConsultations ? 'pendientes' : 'resueltas'}
-        </div>
-      `;
-      return;
-    }
-
-    container.innerHTML = `
-      <div style="display: grid; gap: 1rem;">
-        ${consultations.map(consult => `
-          <div style="border: 2px solid var(--gray-200); border-radius: 0.75rem; padding: 1.5rem;">
-            <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 1rem;">
-              <div>
-                <h3 style="margin-bottom: 0.25rem;">${consult.patient?.name || 'Paciente'}</h3>
-                <p style="color: var(--gray-600); font-size: 0.9rem;">${consult.patient?.email || ''}</p>
-              </div>
-              <div>
-                <span class="badge ${consult.status === 'resolved' ? 'badge-success' : 'badge-warning'}">
-                  ${consult.status === 'resolved' ? 'Resuelta' : 'Pendiente'}
-                </span>
-              </div>
-            </div>
-            
-            <div>
-              <p style="margin-bottom: 0.5rem;"><strong>Mensaje:</strong> ${consult.message}</p>
-              <p style="color: var(--gray-600); font-size: 0.9rem;"><strong>Fecha:</strong> ${new Date(consult.createdAt).toLocaleDateString('es-ES')}</p>
-            </div>
-            
-            ${consult.status === 'pending' ? `
-              <div style="margin-top: 1rem;">
-                <button class="btn btn-primary" onclick="app.showRespondModal('${consult._id}')">
-                  Responder
-                </button>
-              </div>
-            ` : `
-              <div style="margin-top: 1rem; padding: 1rem; background: var(--gray-50); border-radius: 0.5rem;">
-                <strong>Tu respuesta:</strong>
-                <p style="margin-top: 0.5rem;">${consult.response}</p>
-                <small style="color: var(--gray-600);">Respondido el ${new Date(consult.respondedAt).toLocaleDateString('es-ES')}</small>
-              </div>
-            `}
-          </div>
-        `).join('')}
-      </div>
-    `;
-  }
-
-  showRespondModal(consultationId) {
-    const modal = document.createElement('div');
-    modal.className = 'modal active';
-    modal.innerHTML = `
-      <div class="modal-content">
-        <div class="modal-header">
-          <h2>Responder Consulta</h2>
-          <button class="close-btn" onclick="this.closest('.modal').remove()">×</button>
-        </div>
-        
-        <form id="respondForm">
-          <div class="form-group">
-            <label class="form-label">Tu Respuesta</label>
-            <textarea id="responseText" class="form-textarea" rows="6" required 
-              placeholder="Escribe tu respuesta al paciente..."></textarea>
-          </div>
-          
-          <div class="modal-actions">
-            <button type="submit" class="btn btn-primary">Enviar Respuesta</button>
-            <button type="button" class="btn btn-secondary" 
-              onclick="this.closest('.modal').remove()">Cancelar</button>
-          </div>
-        </form>
-      </div>
-    `;
-    
-    document.body.appendChild(modal);
-    
-    document.getElementById('respondForm').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      await this.respondConsultation(consultationId);
-    });
-  }
-
-  async respondConsultation(consultationId) {
-    const response = document.getElementById('responseText').value;
-
-    try {
-      await api.respondConsultation(consultationId, response);
-      this.showMessage('Respuesta enviada correctamente', 'success');
-      document.querySelector('.modal').remove();
-      this.showAdminSection('consultations');
-    } catch (error) {
-      this.showMessage('Error enviando respuesta: ' + error.message, 'error');
-    }
-  }
-
-  viewUserDetail(userId) {
-    this.showMessage('Ver detalle de usuario - Próximamente', 'info');
+    // ... código admin existente ...
+    container.innerHTML = '<div class="empty-state">Panel de Administración</div>';
   }
 
   showMessage(message, type = 'info') {

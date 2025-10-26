@@ -26,6 +26,18 @@ const questionnaireSchema = new mongoose.Schema({
     default: 'personalizado'
   },
   
+  // NUEVO: Mostrar como popup obligatorio
+  showAsPopup: {
+    type: Boolean,
+    default: true
+  },
+  
+  // NUEVO: Prioridad (orden de aparición)
+  priority: {
+    type: Number,
+    default: 0
+  },
+  
   // Preguntas del cuestionario
   questions: [{
     id: {
@@ -38,7 +50,7 @@ const questionnaireSchema = new mongoose.Schema({
     },
     type: {
       type: String,
-      enum: ['text', 'multiple', 'scale', 'yesno', 'number', 'date'],
+      enum: ['text', 'multiple', 'scale', 'yesno', 'number'],
       required: true
     },
     options: [{
@@ -87,32 +99,6 @@ const questionnaireSchema = new mongoose.Schema({
     sendToAll: {
       type: Boolean,
       default: false
-    }
-  },
-  
-  // Programación
-  schedule: {
-    type: {
-      type: String,
-      enum: ['once', 'daily', 'weekly', 'monthly'],
-      default: 'once'
-    },
-    startDate: {
-      type: Date,
-      default: Date.now
-    },
-    endDate: {
-      type: Date,
-      default: null
-    },
-    // Para cuestionarios recurrentes
-    lastSent: {
-      type: Date,
-      default: null
-    },
-    nextScheduled: {
-      type: Date,
-      default: null
     }
   },
   
@@ -253,44 +239,6 @@ questionnaireSchema.methods.updateStats = async function() {
   }
 };
 
-// Método para calcular próximo envío programado
-questionnaireSchema.methods.calculateNextSchedule = function() {
-  if (this.schedule.type === 'once') {
-    return null;
-  }
-  
-  const lastSent = this.schedule.lastSent || this.schedule.startDate;
-  const next = new Date(lastSent);
-  
-  switch (this.schedule.type) {
-    case 'daily':
-      next.setDate(next.getDate() + 1);
-      break;
-    case 'weekly':
-      next.setDate(next.getDate() + 7);
-      break;
-    case 'monthly':
-      next.setMonth(next.getMonth() + 1);
-      break;
-  }
-  
-  // Verificar si está dentro del rango de fechas
-  if (this.schedule.endDate && next > this.schedule.endDate) {
-    return null;
-  }
-  
-  return next;
-};
-
-// Método para activar cuestionario
-questionnaireSchema.methods.activate = async function() {
-  this.status = 'active';
-  if (!this.schedule.nextScheduled && this.schedule.type !== 'once') {
-    this.schedule.nextScheduled = this.calculateNextSchedule();
-  }
-  await this.save();
-};
-
 // Virtual para tasa de respuesta
 questionnaireSchema.virtual('responseRate').get(function() {
   if (this.stats.sent === 0) return 0;
@@ -304,7 +252,8 @@ questionnaireSchema.set('toObject', { virtuals: true });
 // Índices
 questionnaireSchema.index({ status: 1 });
 questionnaireSchema.index({ type: 1 });
-questionnaireSchema.index({ 'schedule.nextScheduled': 1 });
+questionnaireSchema.index({ showAsPopup: 1, status: 1 });
+questionnaireSchema.index({ priority: 1 });
 questionnaireSchema.index({ createdBy: 1 });
 
 module.exports = mongoose.model('Questionnaire', questionnaireSchema);
