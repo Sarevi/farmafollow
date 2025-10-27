@@ -380,15 +380,15 @@ class FarmaFollowApp {
   async renderConsult(container) {
     try {
       const medications = await api.getMedications();
-      
+
       container.innerHTML = `
         <div class="consult-view">
           <button class="btn btn-secondary" onclick="app.showScreen('dashboard')">
             ← Volver
           </button>
-          
+
           <h2>💬 Consultar al Farmacéutico</h2>
-          
+
           <form id="consultForm">
             <div class="form-group">
               <label>Asunto</label>
@@ -400,12 +400,12 @@ class FarmaFollowApp {
                 <option value="otro">Otro</option>
               </select>
             </div>
-            
+
             <div class="form-group">
               <label>Mensaje</label>
               <textarea id="consultMessage" rows="4" required></textarea>
             </div>
-            
+
             <div class="form-group">
               <label>Urgencia</label>
               <select id="consultUrgency">
@@ -414,12 +414,12 @@ class FarmaFollowApp {
                 <option value="high">Alta</option>
               </select>
             </div>
-            
+
             <button type="submit" class="btn btn-primary">Enviar Consulta</button>
           </form>
         </div>
       `;
-      
+
       document.getElementById('consultForm').addEventListener('submit', async (e) => {
         e.preventDefault();
         try {
@@ -436,45 +436,6 @@ class FarmaFollowApp {
       });
     } catch (error) {
       container.innerHTML = '<div class="error">Error cargando formulario</div>';
-    }
-  }
-
-            </div>
-            <span class="badge ${consult.status === 'resolved' ? 'badge-success' : 'badge-warning'}">
-              ${consult.status === 'resolved' ? '✅ Respondida' : '⏳ Pendiente'}
-            </span>
-          </div>
-          
-          <div class="consultation-message">
-            <p><strong>Tu consulta:</strong></p>
-            <p>${consult.message}</p>
-          </div>
-          
-          ${consult.response ? `
-            <div class="consultation-response">
-              <p><strong>💊 Respuesta del Farmacéutico:</strong></p>
-              <p>${consult.response}</p>
-              <small style="color: var(--text-secondary);">
-                Respondido el ${new Date(consult.respondedAt).toLocaleDateString('es-ES')}
-              </small>
-            </div>
-          ` : `
-            <div class="consultation-pending">
-              <p>⏳ Aún no hay respuesta. Te notificaremos cuando el farmacéutico responda.</p>
-            </div>
-          `}
-        </div>
-      `).join('');
-      
-    } catch (error) {
-      container.innerHTML = `
-        <div class="error-state">
-          <p>❌ Error al cargar consultas</p>
-          <button class="btn btn-secondary" onclick="app.loadConsultations()">
-            Reintentar
-          </button>
-        </div>
-      `;
     }
   }
 
