@@ -344,49 +344,102 @@ class API {
     return await this.request(`/analytics/export?type=${type}`);
   }
 
-  // ===== CUESTIONARIOS (Preparado para Fase 2) =====
+  // ===== CUESTIONARIOS PROMS =====
 
-  async getQuestionnaires() {
-    return await this.request('/questionnaires');
-  }
-
-  async getQuestionnaire(questionnaireId) {
-    return await this.request(`/questionnaires/${questionnaireId}`);
+  // Admin - Gestión de cuestionarios
+  async getAllQuestionnaires() {
+    return await this.request('/questionnaires/admin/all');
   }
 
   async createQuestionnaire(data) {
-    return await this.request('/questionnaires', {
+    return await this.request('/questionnaires/admin/create', {
       method: 'POST',
       body: JSON.stringify(data),
     });
   }
 
   async updateQuestionnaire(questionnaireId, data) {
-    return await this.request(`/questionnaires/${questionnaireId}`, {
+    return await this.request(`/questionnaires/admin/${questionnaireId}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
   }
 
   async deleteQuestionnaire(questionnaireId) {
-    return await this.request(`/questionnaires/${questionnaireId}`, {
+    return await this.request(`/questionnaires/admin/${questionnaireId}`, {
       method: 'DELETE',
     });
   }
 
-  async getQuestionnaireResponses(questionnaireId) {
-    return await this.request(`/questionnaires/${questionnaireId}/responses`);
+  async activateQuestionnaire(questionnaireId) {
+    return await this.request(`/questionnaires/admin/${questionnaireId}/activate`, {
+      method: 'PUT',
+    });
   }
 
-  async submitQuestionnaireResponse(questionnaireId, responses) {
-    return await this.request(`/questionnaires/${questionnaireId}/respond`, {
+  async assignQuestionnaire(questionnaireId, patientIds) {
+    return await this.request(`/questionnaires/admin/${questionnaireId}/assign`, {
       method: 'POST',
+      body: JSON.stringify({ patientIds }),
+    });
+  }
+
+  async getQuestionnaireResponses(questionnaireId, status = null) {
+    const query = status ? `?status=${status}` : '';
+    return await this.request(`/questionnaires/admin/${questionnaireId}/responses${query}`);
+  }
+
+  async getQuestionnaireStats(questionnaireId) {
+    return await this.request(`/questionnaires/admin/${questionnaireId}/stats`);
+  }
+
+  async reviewQuestionnaireResponse(responseId, notes) {
+    return await this.request(`/questionnaires/admin/responses/${responseId}/review`, {
+      method: 'PUT',
+      body: JSON.stringify({ notes }),
+    });
+  }
+
+  // Paciente - Cuestionarios asignados
+  async getMyQuestionnaires() {
+    return await this.request('/questionnaires/my-questionnaires');
+  }
+
+  async getMyQuestionnaireHistory() {
+    return await this.request('/questionnaires/my-history');
+  }
+
+  async getQuestionnaire(questionnaireId) {
+    return await this.request(`/questionnaires/${questionnaireId}`);
+  }
+
+  async startQuestionnaire(questionnaireId) {
+    return await this.request(`/questionnaires/${questionnaireId}/start`, {
+      method: 'POST',
+    });
+  }
+
+  async submitQuestionnaire(questionnaireId, responses) {
+    return await this.request(`/questionnaires/${questionnaireId}/submit`, {
+      method: 'PUT',
       body: JSON.stringify({ responses }),
     });
   }
 
-  async getMyPendingQuestionnaires() {
-    return await this.request('/questionnaires/pending');
+  async saveQuestionnaireProgress(questionnaireId, responses) {
+    return await this.request(`/questionnaires/${questionnaireId}/save-progress`, {
+      method: 'PUT',
+      body: JSON.stringify({ responses }),
+    });
+  }
+
+  // Utilidades para cuestionarios
+  async getQuestionnaireMedications() {
+    return await this.request('/questionnaires/utils/medications');
+  }
+
+  async getQuestionnaireDiseases() {
+    return await this.request('/questionnaires/utils/diseases');
   }
 }
 
