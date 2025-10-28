@@ -212,6 +212,7 @@ class FarmaFollowApp {
     // Update header
     const header = document.querySelector('.header');
     const backBtn = document.querySelector('.back-btn');
+    const logoutBtn = document.querySelector('.logout-btn');
     const headerTitle = document.getElementById('headerTitle');
 
     if (screenName === 'login' || screenName === 'register') {
@@ -224,6 +225,10 @@ class FarmaFollowApp {
         } else {
           backBtn.classList.remove('hidden');
         }
+      }
+      // Show logout button for authenticated screens
+      if (logoutBtn) {
+        logoutBtn.classList.remove('hidden');
       }
     }
 
@@ -239,6 +244,9 @@ class FarmaFollowApp {
         break;
       case 'medication':
         this.renderMedicationDetail(app);
+        break;
+      case 'faq':
+        this.renderFAQ(app);
         break;
       case 'reminders':
         this.renderReminders(app);
@@ -258,14 +266,26 @@ class FarmaFollowApp {
   }
 
   goBack() {
-    if (this.currentScreen === 'medication' || 
-        this.currentScreen === 'reminders' || 
+    if (this.currentScreen === 'medication' ||
+        this.currentScreen === 'reminders' ||
         this.currentScreen === 'consult' ||
+        this.currentScreen === 'faq' ||
         this.currentScreen === 'my-consultations') {
       this.showScreen('dashboard');
     } else {
       this.showScreen('dashboard');
     }
+  }
+
+  logout() {
+    // Clear user data and token
+    this.user = null;
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+
+    // Redirect to login
+    this.showScreen('login');
+    this.showMessage('Sesión cerrada correctamente', 'success');
   }
 
   renderLogin(container) {
@@ -484,7 +504,7 @@ class FarmaFollowApp {
           <div class="option-description">Cómo administrar</div>
         </div>
 
-        <div class="option-card" onclick="app.showFAQ()">
+        <div class="option-card" onclick="app.showScreen('faq')">
           <div class="option-icon faq">❓</div>
           <div class="option-title">FAQ</div>
           <div class="option-description">Preguntas comunes</div>
@@ -532,9 +552,12 @@ class FarmaFollowApp {
     document.body.appendChild(modal);
   }
 
-  showFAQ() {
+  renderFAQ(container) {
     const med = this.currentMedication;
-    if (!med) return;
+    if (!med) {
+      this.showScreen('dashboard');
+      return;
+    }
 
     const faqs = med.faqs || [
       { question: "¿Puedo tomar este medicamento con comida?", answer: "Sí, se recomienda tomar con alimentos para reducir efectos secundarios gastrointestinales.", tag: "💊 Administración" },
@@ -544,16 +567,15 @@ class FarmaFollowApp {
       { question: "¿Cuándo debo contactar al farmacéutico?", answer: "Contacta inmediatamente si experimentas: reacciones alérgicas graves, infecciones recurrentes, problemas hepáticos o cualquier síntoma que te preocupe.", tag: "🚨 Urgente" }
     ];
 
-    const modal = document.createElement('div');
-    modal.className = 'modal active';
-    modal.innerHTML = `
-      <div class="modal-content" style="max-width: 700px;">
-        <div class="modal-header">
-          <h2>❓ Preguntas Frecuentes</h2>
-          <button class="close-btn" onclick="this.closest('.modal').remove()">×</button>
-        </div>
-        
+    container.innerHTML = `
+      <div class="content">
         <div class="faq-container">
+          <div style="background: linear-gradient(135deg, var(--warning) 0%, #d97706 100%); padding: 2rem; border-radius: 1rem; margin-bottom: 1.5rem; color: white; text-align: center;">
+            <div style="font-size: 3rem; margin-bottom: 0.5rem;">❓</div>
+            <h2 style="font-size: 1.8rem; font-weight: 700; margin: 0;">Preguntas Frecuentes</h2>
+            <p style="font-size: 0.95rem; opacity: 0.9; margin-top: 0.5rem;">Encuentra respuestas a tus dudas sobre ${med.name}</p>
+          </div>
+
           <div class="faq-list">
             ${faqs.map((faq, index) => `
               <div class="faq-item" data-index="${index}">
@@ -574,7 +596,6 @@ class FarmaFollowApp {
         </div>
       </div>
     `;
-    document.body.appendChild(modal);
   }
 
   toggleFAQ(element) {
@@ -604,7 +625,7 @@ class FarmaFollowApp {
 
         <div class="calendar-month">
           <div class="month-header">
-            <div class="month-name">Octubre 2025</div>
+            <div class="month-name">${this.getCurrentMonthName()}</div>
             <div class="month-nav">
               <button class="nav-btn">←</button>
               <button class="nav-btn">→</button>
@@ -682,29 +703,47 @@ class FarmaFollowApp {
     });
   }
 
+  getCurrentMonthName() {
+    const months = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+                    'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+    const now = new Date();
+    return `${months[now.getMonth()]} ${now.getFullYear()}`;
+  }
+
   generateCalendarDays() {
-    const today = 25;
+    const today = new Date().getDate();
+    const currentMonth = new Date().getMonth();
+    const currentYear = new Date().getFullYear();
+    const firstDay = new Date(currentYear, currentMonth, 1).getDay();
+    const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+
     let html = '';
-    
+
+    // Adjust to start from Monday (0 = Sunday, 1 = Monday, etc.)
+    const startDay = firstDay === 0 ? 6 : firstDay - 1;
+
     // Previous month days
-    html += `<div class="day-cell other-month"><div class="day-number">29</div></div>`;
-    html += `<div class="day-cell other-month"><div class="day-number">30</div></div>`;
-    
-    // Current month days with reminders
-    for (let i = 1; i <= today; i++) {
-      const classes = i === today ? 'day-cell today' : 'day-cell has-reminder';
+    const prevMonthDays = new Date(currentYear, currentMonth, 0).getDate();
+    for (let i = startDay - 1; i >= 0; i--) {
+      html += `<div class="day-cell other-month"><div class="day-number">${prevMonthDays - i}</div></div>`;
+    }
+
+    // Current month days - solo marcar el día actual con recordatorio
+    for (let i = 1; i <= daysInMonth; i++) {
+      let classes = 'day-cell';
+      if (i === today) {
+        classes += ' today has-reminder';
+      }
       html += `<div class="${classes}"><div class="day-number">${i}</div></div>`;
     }
-    
-    // Future days
-    for (let i = today + 1; i <= 31; i++) {
-      html += `<div class="day-cell"><div class="day-number">${i}</div></div>`;
+
+    // Next month days to complete the grid
+    const totalCells = startDay + daysInMonth;
+    const remainingCells = totalCells % 7 === 0 ? 0 : 7 - (totalCells % 7);
+    for (let i = 1; i <= remainingCells; i++) {
+      html += `<div class="day-cell other-month"><div class="day-number">${i}</div></div>`;
     }
-    
-    // Next month days
-    html += `<div class="day-cell other-month"><div class="day-number">1</div></div>`;
-    html += `<div class="day-cell other-month"><div class="day-number">2</div></div>`;
-    
+
     return html;
   }
 
@@ -741,47 +780,10 @@ class FarmaFollowApp {
         </div>
 
         <div class="chat-container" id="chatContainer">
-          <div class="chat-message pharmacist">
-            <div class="chat-avatar">👨‍⚕️</div>
-            <div>
-              <div class="chat-bubble">
-                ¡Hola! Soy tu farmacéutico. ¿En qué puedo ayudarte hoy con tu tratamiento?
-              </div>
-              <div class="chat-time">Ayer, 10:30 AM</div>
-            </div>
-          </div>
-
-          <div class="chat-message user">
-            <div class="chat-avatar">👤</div>
-            <div>
-              <div class="chat-bubble">
-                Hola doctor, he notado algo de enrojecimiento en la cara después de tomar la medicación. ¿Es normal?
-              </div>
-              <div class="chat-time">Ayer, 10:32 AM</div>
-            </div>
-          </div>
-
-          <div class="chat-message pharmacist">
-            <div class="chat-avatar">👨‍⚕️</div>
-            <div>
-              <div class="chat-bubble">
-                Sí, el enrojecimiento facial es un efecto secundario común. Suele mejorar con el tiempo. Te recomiendo:<br>
-                • Tomar la medicación con alimentos<br>
-                • Evitar bebidas calientes cerca de la toma<br>
-                • El síntoma suele durar 30-60 minutos
-              </div>
-              <div class="chat-time">Ayer, 3:15 PM</div>
-            </div>
-          </div>
-
-          <div class="chat-message user">
-            <div class="chat-avatar">👤</div>
-            <div>
-              <div class="chat-bubble">
-                Perfecto, muchas gracias por la información. Me quedo más tranquilo. 😊
-              </div>
-              <div class="chat-time">Ayer, 5:20 PM</div>
-            </div>
+          <div class="empty-state">
+            <div style="font-size: 3rem; margin-bottom: 1rem;">💬</div>
+            <div style="font-size: 1.1rem; font-weight: 600; margin-bottom: 0.5rem;">No hay mensajes aún</div>
+            <div>Escribe tu primera consulta para comenzar</div>
           </div>
         </div>
 
@@ -808,6 +810,13 @@ class FarmaFollowApp {
 
     // Add message to chat
     const chatContainer = document.getElementById('chatContainer');
+
+    // Remove empty state if it exists
+    const emptyState = chatContainer.querySelector('.empty-state');
+    if (emptyState) {
+      emptyState.remove();
+    }
+
     const now = new Date();
     const timeStr = now.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
 

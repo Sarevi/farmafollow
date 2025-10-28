@@ -98,6 +98,31 @@ body {
   display: none;
 }
 
+.logout-btn {
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+  border: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  font-size: 1.3rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.3s;
+  margin-left: auto;
+}
+
+.logout-btn:hover {
+  background: rgba(255, 100, 100, 0.5);
+  transform: scale(1.05);
+}
+
+.logout-btn.hidden {
+  display: none;
+}
+
 /* === CONTENT === */
 .content {
   padding: 1.5rem;
@@ -1274,7 +1299,7 @@ tr:hover {
   }
 
   .options-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, 1fr);
   }
 
   .time-grid {
@@ -1289,8 +1314,19 @@ tr:hover {
     gap: 0.25rem;
   }
 
+  .calendar-month {
+    padding: 1rem;
+    overflow-x: auto;
+  }
+
   .day-cell {
     font-size: 0.85rem;
+    min-width: 35px;
+  }
+
+  .day-header {
+    font-size: 0.75rem;
+    padding: 0.5rem 0.25rem;
   }
 
   .modal-actions {
