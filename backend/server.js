@@ -37,9 +37,8 @@ app.use('/api/reminders', require('./routes/reminders'));
 app.use('/api/consultations', require('./routes/consultations'));
 app.use('/api/analytics', require('./routes/analytics'));
 
-// Rutas de cuestionarios - PREPARADO PARA FASE 2
-// Descomenta cuando crees el archivo routes/questionnaires.js
-// app.use('/api/questionnaires', require('./routes/questionnaires'));
+// Rutas de cuestionarios - HABILITADO
+app.use('/api/questionnaires', require('./routes/questionnaires'));
 
 // Ruta de prueba
 app.get('/api/health', (req, res) => {
