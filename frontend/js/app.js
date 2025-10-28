@@ -860,57 +860,80 @@ class FarmaFollowApp {
   
   async renderAdminDashboard(container) {
     try {
-      const [users, medications, consultations] = await Promise.all([
+      const [users, medications, consultations, questionnaires] = await Promise.all([
         api.getUsers(),
         api.getMedications(),
-        api.getAllConsultations()
+        api.getAllConsultations(),
+        api.getAllQuestionnaires().catch(() => [])
       ]);
 
       this.users = users;
       this.medications = medications;
       this.consultations = consultations;
+      this.questionnaires = questionnaires;
 
       const pendingConsultations = consultations.filter(c => c.status === 'pending').length;
-      const avgAdherence = users.length > 0 
+      const resolvedConsultations = consultations.filter(c => c.status === 'resolved').length;
+      const activeMedications = medications.filter(m => m.isActive).length;
+      const activeQuestionnaires = questionnaires.filter(q => q.status === 'active').length;
+
+      const avgAdherence = users.length > 0
         ? Math.round(users.reduce((sum, u) => sum + (u.adherenceRate || 0), 0) / users.length)
         : 0;
 
+      // Calcular pacientes con baja adherencia
+      const lowAdherenceCount = users.filter(u => (u.adherenceRate || 0) < 70).length;
+
       container.innerHTML = `
         <div class="admin-header">
-          <h1 class="admin-title">Panel de Administración</h1>
-          <button class="btn btn-outline" onclick="app.logout()">
-            Cerrar Sesión
-          </button>
+          <h1 class="admin-title">📊 Panel de Administración</h1>
         </div>
 
         <div class="admin-stats">
           <div class="stat-card">
-            <div class="stat-label">Total Pacientes</div>
+            <div class="stat-icon" style="font-size: 2rem; margin-bottom: 0.5rem;">👥</div>
             <div class="stat-value">${users.length}</div>
+            <div class="stat-label">Total Pacientes</div>
           </div>
           <div class="stat-card" style="background: linear-gradient(135deg, var(--success) 0%, #059669 100%);">
-            <div class="stat-label">Medicamentos</div>
-            <div class="stat-value">${medications.length}</div>
+            <div class="stat-icon" style="font-size: 2rem; margin-bottom: 0.5rem;">💊</div>
+            <div class="stat-value">${activeMedications}</div>
+            <div class="stat-label">Medicamentos Activos</div>
           </div>
           <div class="stat-card" style="background: linear-gradient(135deg, var(--warning) 0%, #d97706 100%);">
-            <div class="stat-label">Consultas Pendientes</div>
+            <div class="stat-icon" style="font-size: 2rem; margin-bottom: 0.5rem;">💬</div>
             <div class="stat-value">${pendingConsultations}</div>
+            <div class="stat-label">Consultas Pendientes</div>
           </div>
           <div class="stat-card" style="background: linear-gradient(135deg, var(--cyan) 0%, var(--cyan-dark) 100%);">
-            <div class="stat-label">Adherencia Media</div>
+            <div class="stat-icon" style="font-size: 2rem; margin-bottom: 0.5rem;">📈</div>
             <div class="stat-value">${avgAdherence}%</div>
+            <div class="stat-label">Adherencia Media</div>
+          </div>
+          <div class="stat-card" style="background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);">
+            <div class="stat-icon" style="font-size: 2rem; margin-bottom: 0.5rem;">📋</div>
+            <div class="stat-value">${activeQuestionnaires}</div>
+            <div class="stat-label">Cuestionarios Activos</div>
+          </div>
+          <div class="stat-card" style="background: linear-gradient(135deg, var(--danger) 0%, #dc2626 100%);">
+            <div class="stat-icon" style="font-size: 2rem; margin-bottom: 0.5rem;">⚠️</div>
+            <div class="stat-value">${lowAdherenceCount}</div>
+            <div class="stat-label">Adherencia Baja</div>
           </div>
         </div>
 
-        <div style="margin-top: 2rem;">
-          <button class="btn btn-primary" onclick="app.showAdminSection('patients')" style="margin-right: 1rem;">
+        <div style="margin-top: 2rem; display: flex; flex-wrap: wrap; gap: 1rem;">
+          <button class="btn btn-primary" onclick="app.showAdminSection('patients')">
             👥 Gestionar Pacientes
           </button>
-          <button class="btn btn-success" onclick="app.showAdminSection('medications')" style="margin-right: 1rem;">
+          <button class="btn btn-success" onclick="app.showAdminSection('medications')">
             💊 Gestionar Medicamentos
           </button>
           <button class="btn btn-secondary" onclick="app.showAdminSection('consultations')">
             💬 Ver Consultas
+          </button>
+          <button class="btn" style="background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); color: white;" onclick="app.showAdminSection('questionnaires')">
+            📋 Cuestionarios PROMS
           </button>
         </div>
 
@@ -925,7 +948,7 @@ class FarmaFollowApp {
 
   async showAdminSection(section) {
     const container = document.getElementById('adminSectionContainer');
-    
+
     switch(section) {
       case 'patients':
         await this.renderPatients(container);
@@ -936,40 +959,71 @@ class FarmaFollowApp {
       case 'consultations':
         await this.renderConsultations(container);
         break;
+      case 'questionnaires':
+        await this.renderQuestionnaires(container);
+        break;
     }
   }
 
   async renderPatients(container) {
     const users = await api.getUsers();
-    
+    const medications = await api.getMedications();
+
     container.innerHTML = `
       <div style="background: white; border-radius: 1rem; padding: 1.5rem; box-shadow: var(--shadow);">
-        <h2>Gestión de Pacientes</h2>
-        <div class="table-container" style="margin-top: 1.5rem;">
-          <table>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+          <h2>👥 Gestión de Pacientes</h2>
+          <button class="btn btn-primary" onclick="app.showAddPatientModal()">
+            + Nuevo Paciente
+          </button>
+        </div>
+
+        <div style="margin-bottom: 1rem;">
+          <input type="text" id="searchPatients" class="form-input" placeholder="🔍 Buscar pacientes..."
+            onkeyup="app.filterPatients(this.value)">
+        </div>
+
+        <div class="table-container">
+          <table id="patientsTable">
             <thead>
               <tr>
                 <th>Nombre</th>
                 <th>Email</th>
-                <th>Medicamento</th>
+                <th>Medicamentos</th>
+                <th>Enfermedades</th>
                 <th>Adherencia</th>
                 <th>Acciones</th>
               </tr>
             </thead>
             <tbody>
               ${users.map(user => `
-                <tr>
-                  <td>${user.name}</td>
+                <tr data-patient-name="${user.name.toLowerCase()}" data-patient-email="${user.email.toLowerCase()}">
+                  <td>
+                    <strong>${user.name}</strong>
+                    ${user.phone ? `<br><small style="color: var(--gray-600);">📱 ${user.phone}</small>` : ''}
+                  </td>
                   <td>${user.email}</td>
-                  <td>${user.medication?.name || '-'}</td>
+                  <td>
+                    ${user.medications && user.medications.length > 0
+                      ? user.medications.map(m => m.name || '-').join(', ')
+                      : '<span style="color: var(--gray-400);">Sin asignar</span>'}
+                  </td>
+                  <td>
+                    ${user.diseases && user.diseases.length > 0
+                      ? user.diseases.slice(0, 2).join(', ') + (user.diseases.length > 2 ? '...' : '')
+                      : '<span style="color: var(--gray-400);">-</span>'}
+                  </td>
                   <td>
                     <span class="badge ${user.adherenceRate >= 80 ? 'badge-success' : user.adherenceRate >= 60 ? 'badge-warning' : 'badge-danger'}">
                       ${user.adherenceRate || 0}%
                     </span>
                   </td>
                   <td>
-                    <button class="btn btn-sm btn-outline" onclick="app.viewUserDetail('${user._id}')">
-                      Ver
+                    <button class="btn btn-sm btn-outline" onclick="app.viewPatientDetail('${user._id}')" title="Ver detalle">
+                      👁️
+                    </button>
+                    <button class="btn btn-sm btn-secondary" onclick="app.editPatient('${user._id}')" title="Editar">
+                      ✏️
                     </button>
                   </td>
                 </tr>
@@ -979,6 +1033,248 @@ class FarmaFollowApp {
         </div>
       </div>
     `;
+
+    this.allPatients = users;
+    this.allMedications = medications;
+  }
+
+  filterPatients(searchTerm) {
+    const rows = document.querySelectorAll('#patientsTable tbody tr');
+    const term = searchTerm.toLowerCase();
+
+    rows.forEach(row => {
+      const name = row.getAttribute('data-patient-name');
+      const email = row.getAttribute('data-patient-email');
+
+      if (name.includes(term) || email.includes(term)) {
+        row.style.display = '';
+      } else {
+        row.style.display = 'none';
+      }
+    });
+  }
+
+  showAddPatientModal() {
+    const modal = document.createElement('div');
+    modal.className = 'modal active';
+    modal.innerHTML = `
+      <div class="modal-content" style="max-width: 700px; max-height: 90vh; overflow-y: auto;">
+        <div class="modal-header">
+          <h2>➕ Nuevo Paciente</h2>
+          <button class="close-btn" onclick="this.closest('.modal').remove()">×</button>
+        </div>
+
+        <form id="addPatientForm">
+          <h3 style="margin-bottom: 1rem; color: var(--primary);">Datos Personales</h3>
+
+          <div class="form-group">
+            <label class="form-label">Nombre Completo *</label>
+            <input type="text" id="patientName" class="form-input" required>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+            <div class="form-group">
+              <label class="form-label">Email *</label>
+              <input type="email" id="patientEmail" class="form-input" required>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Teléfono</label>
+              <input type="tel" id="patientPhone" class="form-input">
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+            <div class="form-group">
+              <label class="form-label">Fecha de Nacimiento</label>
+              <input type="date" id="patientDOB" class="form-input">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Género</label>
+              <select id="patientGender" class="form-select">
+                <option value="">Seleccionar...</option>
+                <option value="male">Masculino</option>
+                <option value="female">Femenino</option>
+                <option value="other">Otro</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Contraseña *</label>
+            <input type="password" id="patientPassword" class="form-input" required minlength="6">
+            <small style="color: var(--gray-600);">Mínimo 6 caracteres</small>
+          </div>
+
+          <hr style="margin: 1.5rem 0; border: none; border-top: 2px solid var(--gray-200);">
+
+          <h3 style="margin-bottom: 1rem; color: var(--primary);">Información Clínica</h3>
+
+          <div class="form-group">
+            <label class="form-label">Enfermedades</label>
+            <input type="text" id="patientDiseases" class="form-input"
+              placeholder="Ej: Artritis reumatoide, Diabetes tipo 2">
+            <small style="color: var(--gray-600);">Separar con comas</small>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Medicamentos Asignados</label>
+            <select id="patientMedications" class="form-select" multiple style="min-height: 100px;">
+              ${this.allMedications.map(med => `
+                <option value="${med._id}">${med.name}</option>
+              `).join('')}
+            </select>
+            <small style="color: var(--gray-600);">Mantén Ctrl (Cmd en Mac) para seleccionar múltiples</small>
+          </div>
+
+          <div class="modal-actions">
+            <button type="submit" class="btn btn-primary">Crear Paciente</button>
+            <button type="button" class="btn btn-secondary"
+              onclick="this.closest('.modal').remove()">Cancelar</button>
+          </div>
+        </form>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    document.getElementById('addPatientForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      await this.createPatient();
+    });
+  }
+
+  async createPatient() {
+    const name = document.getElementById('patientName').value;
+    const email = document.getElementById('patientEmail').value;
+    const phone = document.getElementById('patientPhone').value;
+    const dateOfBirth = document.getElementById('patientDOB').value;
+    const gender = document.getElementById('patientGender').value;
+    const password = document.getElementById('patientPassword').value;
+    const diseasesStr = document.getElementById('patientDiseases').value;
+    const medicationSelect = document.getElementById('patientMedications');
+    const medications = Array.from(medicationSelect.selectedOptions).map(opt => opt.value);
+
+    const diseases = diseasesStr ? diseasesStr.split(',').map(d => d.trim()).filter(d => d) : [];
+
+    try {
+      await api.register(name, email, password, {
+        phone,
+        dateOfBirth,
+        gender,
+        diseases,
+        medications,
+        role: 'patient'
+      });
+
+      this.showMessage('✅ Paciente creado correctamente', 'success');
+      document.querySelector('.modal').remove();
+      this.showAdminSection('patients');
+    } catch (error) {
+      this.showMessage('Error creando paciente: ' + error.message, 'error');
+    }
+  }
+
+  async editPatient(patientId) {
+    // TODO: Implementar modal de edición similar al de creación
+    this.showMessage('Funcionalidad de edición disponible próximamente', 'info');
+  }
+
+  async viewPatientDetail(patientId) {
+    try {
+      const patient = await api.getUserProfile(patientId);
+
+      const modal = document.createElement('div');
+      modal.className = 'modal active';
+      modal.innerHTML = `
+        <div class="modal-content" style="max-width: 800px; max-height: 90vh; overflow-y: auto;">
+          <div class="modal-header">
+            <h2>👤 Perfil de ${patient.name}</h2>
+            <button class="close-btn" onclick="this.closest('.modal').remove()">×</button>
+          </div>
+
+          <div style="display: grid; gap: 1.5rem;">
+            <div style="background: var(--gray-50); padding: 1.5rem; border-radius: 0.75rem;">
+              <h3 style="margin-bottom: 1rem;">📋 Información Personal</h3>
+              <div style="display: grid; gap: 0.5rem;">
+                <p><strong>Email:</strong> ${patient.email}</p>
+                ${patient.phone ? `<p><strong>Teléfono:</strong> ${patient.phone}</p>` : ''}
+                ${patient.dateOfBirth ? `<p><strong>Fecha de Nacimiento:</strong> ${new Date(patient.dateOfBirth).toLocaleDateString('es-ES')}</p>` : ''}
+                ${patient.gender ? `<p><strong>Género:</strong> ${patient.gender}</p>` : ''}
+              </div>
+            </div>
+
+            ${patient.diseases && patient.diseases.length > 0 ? `
+              <div style="background: var(--gray-50); padding: 1.5rem; border-radius: 0.75rem;">
+                <h3 style="margin-bottom: 1rem;">🏥 Enfermedades</h3>
+                <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
+                  ${patient.diseases.map(d => `
+                    <span class="badge badge-warning">${d}</span>
+                  `).join('')}
+                </div>
+              </div>
+            ` : ''}
+
+            ${patient.medications && patient.medications.length > 0 ? `
+              <div style="background: var(--gray-50); padding: 1.5rem; border-radius: 0.75rem;">
+                <h3 style="margin-bottom: 1rem;">💊 Medicamentos</h3>
+                <div style="display: grid; gap: 0.5rem;">
+                  ${patient.medications.map(m => `
+                    <p>• ${m.name || m}</p>
+                  `).join('')}
+                </div>
+              </div>
+            ` : ''}
+
+            <div style="background: var(--gray-50); padding: 1.5rem; border-radius: 0.75rem;">
+              <h3 style="margin-bottom: 1rem;">📈 Adherencia</h3>
+              <div style="display: flex; align-items: center; gap: 1rem;">
+                <div style="font-size: 3rem; font-weight: 700; color: ${
+                  (patient.adherenceRate || 0) >= 80 ? 'var(--success)' :
+                  (patient.adherenceRate || 0) >= 60 ? 'var(--warning)' : 'var(--danger)'
+                };">
+                  ${patient.adherenceRate || 0}%
+                </div>
+                <div>
+                  <p><strong>Estado:</strong> ${
+                    (patient.adherenceRate || 0) >= 80 ? '✅ Excelente' :
+                    (patient.adherenceRate || 0) >= 60 ? '⚠️ Mejorable' : '❌ Crítico'
+                  }</p>
+                </div>
+              </div>
+            </div>
+
+            ${patient.adverseEvents && patient.adverseEvents.length > 0 ? `
+              <div style="background: #fee2e2; padding: 1.5rem; border-radius: 0.75rem;">
+                <h3 style="margin-bottom: 1rem; color: var(--danger);">⚠️ Eventos Adversos</h3>
+                <div style="display: grid; gap: 0.75rem;">
+                  ${patient.adverseEvents.slice(0, 3).map(e => `
+                    <div style="padding: 0.75rem; background: white; border-radius: 0.5rem;">
+                      <p><strong>${e.event}</strong></p>
+                      <small style="color: var(--gray-600);">${new Date(e.date).toLocaleDateString('es-ES')}</small>
+                    </div>
+                  `).join('')}
+                </div>
+              </div>
+            ` : ''}
+          </div>
+
+          <div class="modal-actions" style="margin-top: 1.5rem;">
+            <button class="btn btn-primary" onclick="app.editPatient('${patientId}')">
+              Editar Paciente
+            </button>
+            <button class="btn btn-secondary" onclick="this.closest('.modal').remove()">
+              Cerrar
+            </button>
+          </div>
+        </div>
+      `;
+
+      document.body.appendChild(modal);
+    } catch (error) {
+      this.showMessage('Error cargando detalle del paciente: ' + error.message, 'error');
+    }
   }
 
   async renderMedications(container) {
