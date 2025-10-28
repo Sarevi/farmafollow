@@ -104,9 +104,10 @@ router.post('/:id/record-dose', auth, async (req, res) => {
     }
     
     // Registrar en historial
-    reminder.history.push({
-      takenAt: new Date(),
-      taken: taken !== false,
+    reminder.doseHistory.push({
+      scheduledTime: new Date(),
+      actualTime: new Date(),
+      status: taken !== false ? 'taken' : 'missed',
       notes: notes || ''
     });
     
@@ -157,7 +158,7 @@ router.get('/:id/history', auth, async (req, res) => {
     }
     
     // Ordenar historial por fecha descendente
-    const history = reminder.history.sort((a, b) => b.takenAt - a.takenAt);
+    const history = reminder.doseHistory.sort((a, b) => b.actualTime - a.actualTime);
     
     res.json({
       reminder: {

@@ -146,7 +146,7 @@ class FarmaFollowApp {
           <button class="btn btn-secondary" onclick="app.postponeDose()">
             ⏰ Posponer 15 min
           </button>
-          <button class="btn btn-outline" onclick="app.dismissReminder()">
+          <button class="btn btn-outline" onclick="app.confirmDose(false)">
             ✗ Omitir
           </button>
         </div>
@@ -163,9 +163,19 @@ class FarmaFollowApp {
     if (modal) modal.remove();
 
     try {
-      await api.recordDose(this.activeReminder._id, taken);
-      this.showMessage('✅ Dosis registrada correctamente', 'success');
-      
+      const response = await api.recordDose(this.activeReminder._id, taken);
+
+      // Actualizar adherencia del usuario
+      if (response.adherence !== null && response.adherence !== undefined) {
+        this.user.adherenceRate = response.adherence;
+      }
+
+      // Actualizar UI si estamos en el dashboard
+      this.updateAdherenceDisplay();
+
+      const message = taken ? '✅ Dosis registrada correctamente' : '⚠️ Dosis omitida registrada';
+      this.showMessage(message, taken ? 'success' : 'warning');
+
       if (this.currentScreen === 'reminders') {
         this.renderReminderCalendar();
       }
@@ -195,6 +205,21 @@ class FarmaFollowApp {
     const modal = document.querySelector('.reminder-modal');
     if (modal) modal.remove();
     this.activeReminder = null;
+  }
+
+  updateAdherenceDisplay() {
+    // Actualizar el círculo de adherencia si está visible
+    const adherenceCircle = document.querySelector('.adherence-circle .percentage');
+    if (adherenceCircle && this.user && this.user.adherenceRate !== undefined) {
+      const adherence = Math.round(this.user.adherenceRate);
+      adherenceCircle.textContent = `${adherence}%`;
+
+      // Animación suave del cambio
+      adherenceCircle.style.transform = 'scale(1.1)';
+      setTimeout(() => {
+        adherenceCircle.style.transform = 'scale(1)';
+      }, 200);
+    }
   }
 
   showScreen(screenName) {
