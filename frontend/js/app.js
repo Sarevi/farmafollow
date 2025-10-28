@@ -881,9 +881,6 @@ class FarmaFollowApp {
         ? Math.round(users.reduce((sum, u) => sum + (u.adherenceRate || 0), 0) / users.length)
         : 0;
 
-      // Calcular pacientes con baja adherencia
-      const lowAdherenceCount = users.filter(u => (u.adherenceRate || 0) < 70).length;
-
       container.innerHTML = `
         <div class="admin-header">
           <h1 class="admin-title">📊 Panel de Administración</h1>
@@ -914,11 +911,6 @@ class FarmaFollowApp {
             <div class="stat-icon" style="font-size: 2rem; margin-bottom: 0.5rem;">📋</div>
             <div class="stat-value">${activeQuestionnaires}</div>
             <div class="stat-label">Cuestionarios Activos</div>
-          </div>
-          <div class="stat-card" style="background: linear-gradient(135deg, var(--danger) 0%, #dc2626 100%);">
-            <div class="stat-icon" style="font-size: 2rem; margin-bottom: 0.5rem;">⚠️</div>
-            <div class="stat-value">${lowAdherenceCount}</div>
-            <div class="stat-label">Adherencia Baja</div>
           </div>
         </div>
 
@@ -1177,8 +1169,96 @@ class FarmaFollowApp {
   }
 
   async editPatient(patientId) {
-    // TODO: Implementar modal de edición similar al de creación
-    this.showMessage('Funcionalidad de edición disponible próximamente', 'info');
+    try {
+      // Cerrar modal actual si existe
+      document.querySelector('.modal')?.remove();
+
+      const [patient, medications, clinicalRecord] = await Promise.all([
+        api.getUserProfile(patientId),
+        api.getMedications(),
+        api.getLatestClinicalRecord(patientId).catch(() => null)
+      ]);
+
+      const modal = document.createElement('div');
+      modal.className = 'modal active';
+      modal.innerHTML = `
+        <div class="modal-content" style="max-width: 1000px; max-height: 90vh; overflow-y: auto;">
+          <div class="modal-header">
+            <h2>✏️ Editar Paciente: ${patient.patient?.name || 'Sin nombre'}</h2>
+            <button class="close-btn" onclick="this.closest('.modal').remove()">×</button>
+          </div>
+
+          <div style="display: flex; gap: 1rem; margin-bottom: 1rem; border-bottom: 2px solid var(--gray-200);">
+            <button class="tab-btn active" data-tab="basic" onclick="app.switchEditTab('basic')">
+              📋 Datos Básicos
+            </button>
+            <button class="tab-btn" data-tab="clinical" onclick="app.switchEditTab('clinical')">
+              🏥 Historia Clínica
+            </button>
+            <button class="tab-btn" data-tab="treatment" onclick="app.switchEditTab('treatment')">
+              💊 Tratamiento
+            </button>
+            <button class="tab-btn" data-tab="activity" onclick="app.switchEditTab('activity')">
+              📈 Actividad
+            </button>
+            <button class="tab-btn" data-tab="history" onclick="app.switchEditTab('history')">
+              📚 Historial
+            </button>
+          </div>
+
+          <form id="editPatientForm">
+            <!-- TAB: Datos Básicos -->
+            <div class="tab-content active" data-tab-content="basic">
+              ${this.renderBasicInfoForm(patient.patient)}
+            </div>
+
+            <!-- TAB: Historia Clínica -->
+            <div class="tab-content hidden" data-tab-content="clinical">
+              ${this.renderClinicalHistoryForm(clinicalRecord)}
+            </div>
+
+            <!-- TAB: Tratamiento -->
+            <div class="tab-content hidden" data-tab-content="treatment">
+              ${this.renderTreatmentForm(clinicalRecord, medications)}
+            </div>
+
+            <!-- TAB: Actividad de la Enfermedad -->
+            <div class="tab-content hidden" data-tab-content="activity">
+              ${this.renderDiseaseActivityForm(clinicalRecord)}
+            </div>
+
+            <!-- TAB: Historial -->
+            <div class="tab-content hidden" data-tab-content="history">
+              <div id="clinicalHistoryList">Cargando historial...</div>
+            </div>
+
+            <div class="modal-actions" style="margin-top: 2rem; padding-top: 1rem; border-top: 2px solid var(--gray-200);">
+              <button type="submit" class="btn btn-primary">💾 Guardar Cambios</button>
+              <button type="button" class="btn" style="background: var(--cyan);" onclick="app.exportPatientData('${patientId}')">
+                📥 Exportar Datos
+              </button>
+              <button type="button" class="btn btn-secondary" onclick="this.closest('.modal').remove()">
+                Cancelar
+              </button>
+            </div>
+          </form>
+        </div>
+      `;
+
+      document.body.appendChild(modal);
+
+      // Cargar historial si existe
+      this.loadClinicalHistory(patientId);
+
+      // Event listener para el formulario
+      document.getElementById('editPatientForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        await this.savePatientChanges(patientId, patient.patient, clinicalRecord);
+      });
+
+    } catch (error) {
+      this.showMessage('Error cargando datos del paciente: ' + error.message, 'error');
+    }
   }
 
   async viewPatientDetail(patientId) {
@@ -2128,7 +2208,506 @@ class FarmaFollowApp {
     this.stopReminderChecker();
     this.showScreen('login');
   }
+
+  // ===== FUNCIONES PARA EDICIÓN DE PACIENTES CON HISTORIAL CLÍNICO =====
+
+  switchEditTab(tabName) {
+    // Ocultar todos los tabs
+    document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(content => {
+      content.classList.remove('active');
+      content.classList.add('hidden');
+    });
+
+    // Mostrar tab seleccionado
+    document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
+    const content = document.querySelector(`[data-tab-content="${tabName}"]`);
+    content.classList.remove('hidden');
+    content.classList.add('active');
+  }
+
+  renderBasicInfoForm(patient) {
+    return `
+      <h3 style="margin-bottom: 1rem; color: var(--primary);">📋 Datos Personales</h3>
+
+      <div class="form-group">
+        <label class="form-label">Nombre Completo *</label>
+        <input type="text" id="editPatientName" class="form-input" value="${patient?.name || ''}" required>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+        <div class="form-group">
+          <label class="form-label">Email *</label>
+          <input type="email" id="editPatientEmail" class="form-input" value="${patient?.email || ''}" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Teléfono</label>
+          <input type="tel" id="editPatientPhone" class="form-input" value="${patient?.phone || ''}">
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+        <div class="form-group">
+          <label class="form-label">Fecha de Nacimiento</label>
+          <input type="date" id="editPatientDOB" class="form-input" value="${patient?.dateOfBirth ? new Date(patient.dateOfBirth).toISOString().split('T')[0] : ''}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Género</label>
+          <select id="editPatientGender" class="form-select">
+            <option value="">Seleccionar...</option>
+            <option value="masculino" ${patient?.gender === 'masculino' ? 'selected' : ''}>Masculino</option>
+            <option value="femenino" ${patient?.gender === 'femenino' ? 'selected' : ''}>Femenino</option>
+            <option value="otro" ${patient?.gender === 'otro' ? 'selected' : ''}>Otro</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Enfermedades</label>
+        <input type="text" id="editPatientDiseases" class="form-input" value="${patient?.diseases?.join(', ') || ''}"
+          placeholder="Ej: Artritis reumatoide, Diabetes tipo 2">
+        <small style="color: var(--gray-600);">Separar con comas</small>
+      </div>
+    `;
+  }
+
+  renderClinicalHistoryForm(record) {
+    return `
+      <h3 style="margin-bottom: 1rem; color: var(--primary);">🏥 Historia Clínica</h3>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem;">
+        <div class="form-group">
+          <label class="form-label">Peso (kg)</label>
+          <input type="number" id="clinicalWeight" class="form-input" step="0.1"
+            value="${record?.demographics?.weight || ''}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Altura (cm)</label>
+          <input type="number" id="clinicalHeight" class="form-input" step="0.1"
+            value="${record?.demographics?.height || ''}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">IMC</label>
+          <input type="number" id="clinicalBMI" class="form-input" step="0.1" readonly
+            value="${record?.demographics?.bmi || ''}">
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+        <div class="form-group">
+          <label class="form-label">Profesión</label>
+          <input type="text" id="clinicalProfession" class="form-input"
+            value="${record?.demographics?.profession || ''}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Situación Laboral</label>
+          <select id="clinicalEmployment" class="form-select">
+            <option value="">Seleccionar...</option>
+            <option value="empleado" ${record?.demographics?.employmentStatus === 'empleado' ? 'selected' : ''}>Empleado</option>
+            <option value="desempleado" ${record?.demographics?.employmentStatus === 'desempleado' ? 'selected' : ''}>Desempleado</option>
+            <option value="jubilado" ${record?.demographics?.employmentStatus === 'jubilado' ? 'selected' : ''}>Jubilado</option>
+            <option value="estudiante" ${record?.demographics?.employmentStatus === 'estudiante' ? 'selected' : ''}>Estudiante</option>
+          </select>
+        </div>
+      </div>
+
+      <h4 style="margin-top: 1.5rem; margin-bottom: 1rem; color: var(--primary);">Artritis Reumatoide</h4>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem;">
+        <div class="form-group">
+          <label class="form-label">Fecha Diagnóstico AR</label>
+          <input type="date" id="clinicalARDate" class="form-input"
+            value="${record?.clinicalHistory?.arDiagnosisDate ? new Date(record.clinicalHistory.arDiagnosisDate).toISOString().split('T')[0] : ''}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Factor Reumatoide</label>
+          <select id="clinicalRF" class="form-select">
+            <option value="">No realizado</option>
+            <option value="positivo" ${record?.clinicalHistory?.rheumatoidFactor === 'positivo' ? 'selected' : ''}>Positivo</option>
+            <option value="negativo" ${record?.clinicalHistory?.rheumatoidFactor === 'negativo' ? 'selected' : ''}>Negativo</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Anti-CCP</label>
+          <select id="clinicalAntiCCP" class="form-select">
+            <option value="">No realizado</option>
+            <option value="positivo" ${record?.clinicalHistory?.antiCCP === 'positivo' ? 'selected' : ''}>Positivo</option>
+            <option value="negativo" ${record?.clinicalHistory?.antiCCP === 'negativo' ? 'selected' : ''}>Negativo</option>
+          </select>
+        </div>
+      </div>
+
+      <h4 style="margin-top: 1.5rem; margin-bottom: 1rem; color: var(--primary);">Comorbilidades y Alergias</h4>
+
+      <div class="form-group">
+        <label class="form-label">Comorbilidades</label>
+        <textarea id="clinicalComorbidities" class="form-input" rows="3"
+          placeholder="Ej: Hipertensión controlada, Diabetes tipo 2">${record?.clinicalHistory?.comorbidities?.map(c => c.condition).join(', ') || ''}</textarea>
+        <small style="color: var(--gray-600);">Separar con comas</small>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Alergias Medicamentosas</label>
+        <textarea id="clinicalAllergies" class="form-input" rows="3"
+          placeholder="Ej: Penicilina - Reacción cutánea (moderada)">${record?.clinicalHistory?.allergies?.map(a => `${a.medication} - ${a.reaction} (${a.severity})`).join(', ') || ''}</textarea>
+        <small style="color: var(--gray-600);">Formato: Medicamento - Reacción (severidad)</small>
+      </div>
+    `;
+  }
+
+  renderTreatmentForm(record, medications) {
+    return `
+      <h3 style="margin-bottom: 1rem; color: var(--primary);">💊 Tratamiento Actual</h3>
+
+      <h4 style="margin-top: 1rem; margin-bottom: 0.5rem;">FAME (Fármacos Antirreumáticos)</h4>
+      <div id="fameList">
+        ${record?.currentTreatment?.fame?.map((f, i) => `
+          <div class="treatment-item" style="background: var(--gray-50); padding: 1rem; border-radius: 0.5rem; margin-bottom: 0.5rem;">
+            <input type="text" placeholder="Nombre medicamento" class="form-input" style="margin-bottom: 0.5rem;"
+              value="${f.medicationName || ''}" data-fame-name="${i}">
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.5rem;">
+              <input type="text" placeholder="Dosis" class="form-input" value="${f.dose || ''}" data-fame-dose="${i}">
+              <input type="text" placeholder="Frecuencia" class="form-input" value="${f.frequency || ''}" data-fame-freq="${i}">
+              <input type="text" placeholder="Vía" class="form-input" value="${f.route || ''}" data-fame-route="${i}">
+            </div>
+          </div>
+        `).join('') || '<p style="color: var(--gray-600);">No hay FAME registrados</p>'}
+      </div>
+      <button type="button" class="btn btn-sm btn-outline" onclick="app.addTreatmentItem('fame')" style="margin-top: 0.5rem;">+ Añadir FAME</button>
+
+      <h4 style="margin-top: 1.5rem; margin-bottom: 0.5rem;">Biológicos</h4>
+      <div id="biologicsList">
+        ${record?.currentTreatment?.biologics?.map((b, i) => `
+          <div class="treatment-item" style="background: var(--gray-50); padding: 1rem; border-radius: 0.5rem; margin-bottom: 0.5rem;">
+            <input type="text" placeholder="Nombre medicamento" class="form-input" style="margin-bottom: 0.5rem;"
+              value="${b.medicationName || ''}" data-biologic-name="${i}">
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.5rem;">
+              <select class="form-select" data-biologic-type="${i}">
+                <option value="">Tipo...</option>
+                <option value="anti-TNF" ${b.type === 'anti-TNF' ? 'selected' : ''}>Anti-TNF</option>
+                <option value="anti-IL6" ${b.type === 'anti-IL6' ? 'selected' : ''}>Anti-IL6</option>
+                <option value="anti-JAK" ${b.type === 'anti-JAK' ? 'selected' : ''}>Anti-JAK</option>
+              </select>
+              <input type="text" placeholder="Dosis" class="form-input" value="${b.dose || ''}" data-biologic-dose="${i}">
+              <input type="text" placeholder="Frecuencia" class="form-input" value="${b.frequency || ''}" data-biologic-freq="${i}">
+            </div>
+          </div>
+        `).join('') || '<p style="color: var(--gray-600);">No hay biológicos registrados</p>'}
+      </div>
+      <button type="button" class="btn btn-sm btn-outline" onclick="app.addTreatmentItem('biologic')" style="margin-top: 0.5rem;">+ Añadir Biológico</button>
+
+      <h4 style="margin-top: 1.5rem; margin-bottom: 0.5rem;">Suplementos</h4>
+      <div class="form-group">
+        <textarea id="treatmentSupplements" class="form-input" rows="2"
+          placeholder="Ej: Ácido fólico 5mg/día, Calcio + Vitamina D 1 comp/día">${record?.currentTreatment?.supplements?.map(s => `${s.name} ${s.dose} ${s.frequency}`).join(', ') || ''}</textarea>
+      </div>
+    `;
+  }
+
+  renderDiseaseActivityForm(record) {
+    return `
+      <h3 style="margin-bottom: 1rem; color: var(--primary);">📈 Actividad de la Enfermedad</h3>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem;">
+        <div class="form-group">
+          <label class="form-label">Articulaciones Dolorosas</label>
+          <input type="number" id="activityTenderJoints" class="form-input"
+            value="${record?.diseaseActivity?.tenderJointsCount || ''}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Articulaciones Inflamadas</label>
+          <input type="number" id="activitySwollenJoints" class="form-input"
+            value="${record?.diseaseActivity?.swollenJointsCount || ''}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Rigidez Matutina (min)</label>
+          <input type="number" id="activityMorningStiffness" class="form-input"
+            value="${record?.diseaseActivity?.morningStiffness?.duration || ''}">
+        </div>
+      </div>
+
+      <h4 style="margin-top: 1.5rem; margin-bottom: 1rem;">DAS28 y Marcadores</h4>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem;">
+        <div class="form-group">
+          <label class="form-label">DAS28 Score</label>
+          <input type="number" id="activityDAS28" class="form-input" step="0.1"
+            value="${record?.diseaseActivity?.das28?.score || ''}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">VSG (mm/h)</label>
+          <input type="number" id="activityVSG" class="form-input"
+            value="${record?.diseaseActivity?.labResults?.vsg || ''}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">PCR (mg/L)</label>
+          <input type="number" id="activityCRP" class="form-input" step="0.1"
+            value="${record?.diseaseActivity?.labResults?.crp || ''}">
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+        <div class="form-group">
+          <label class="form-label">HAQ Score (0-3)</label>
+          <input type="number" id="activityHAQ" class="form-input" step="0.1" min="0" max="3"
+            value="${record?.diseaseActivity?.haq?.score || ''}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Dolor EVA (0-10)</label>
+          <input type="number" id="activityPain" class="form-input" step="0.5" min="0" max="10"
+            value="${record?.diseaseActivity?.painScale?.score || ''}">
+        </div>
+      </div>
+
+      <h4 style="margin-top: 1.5rem; margin-bottom: 1rem;">Adherencia y Efectos Adversos</h4>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+        <div class="form-group">
+          <label class="form-label">Adherencia General</label>
+          <select id="adherenceOverall" class="form-select">
+            <option value="">Seleccionar...</option>
+            <option value="excelente" ${record?.adherenceEvaluation?.overallAdherence === 'excelente' ? 'selected' : ''}>Excelente</option>
+            <option value="buena" ${record?.adherenceEvaluation?.overallAdherence === 'buena' ? 'selected' : ''}>Buena</option>
+            <option value="regular" ${record?.adherenceEvaluation?.overallAdherence === 'regular' ? 'selected' : ''}>Regular</option>
+            <option value="mala" ${record?.adherenceEvaluation?.overallAdherence === 'mala' ? 'selected' : ''}>Mala</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Adherencia % (0-100)</label>
+          <input type="number" id="adherencePercentage" class="form-input" min="0" max="100"
+            value="${record?.adherenceEvaluation?.adherencePercentage || ''}">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Efectos Adversos Actuales</label>
+        <textarea id="adherenceAdverse" class="form-input" rows="3"
+          placeholder="Ej: Náuseas leves (relacionado con metotrexato)">${record?.adherenceEvaluation?.currentAdverseEffects?.map(e => `${e.effect} ${e.severity} (${e.relatedMedication})`).join(', ') || ''}</textarea>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Notas del Profesional</label>
+        <textarea id="professionalNotes" class="form-input" rows="4"
+          placeholder="Observaciones, plan de seguimiento, intervenciones...">${record?.professionalNotes?.clinicalNotes || ''}</textarea>
+      </div>
+    `;
+  }
+
+  addTreatmentItem(type) {
+    const container = document.getElementById(type === 'fame' ? 'fameList' : 'biologicsList');
+    const index = container.querySelectorAll('.treatment-item').length;
+
+    const item = document.createElement('div');
+    item.className = 'treatment-item';
+    item.style = 'background: var(--gray-50); padding: 1rem; border-radius: 0.5rem; margin-bottom: 0.5rem;';
+
+    if (type === 'fame') {
+      item.innerHTML = `
+        <input type="text" placeholder="Nombre medicamento" class="form-input" style="margin-bottom: 0.5rem;" data-fame-name="${index}">
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.5rem;">
+          <input type="text" placeholder="Dosis" class="form-input" data-fame-dose="${index}">
+          <input type="text" placeholder="Frecuencia" class="form-input" data-fame-freq="${index}">
+          <input type="text" placeholder="Vía" class="form-input" data-fame-route="${index}">
+        </div>
+      `;
+    } else {
+      item.innerHTML = `
+        <input type="text" placeholder="Nombre medicamento" class="form-input" style="margin-bottom: 0.5rem;" data-biologic-name="${index}">
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.5rem;">
+          <select class="form-select" data-biologic-type="${index}">
+            <option value="">Tipo...</option>
+            <option value="anti-TNF">Anti-TNF</option>
+            <option value="anti-IL6">Anti-IL6</option>
+            <option value="anti-JAK">Anti-JAK</option>
+          </select>
+          <input type="text" placeholder="Dosis" class="form-input" data-biologic-dose="${index}">
+          <input type="text" placeholder="Frecuencia" class="form-input" data-biologic-freq="${index}">
+        </div>
+      `;
+    }
+
+    container.appendChild(item);
+  }
+
+  async loadClinicalHistory(patientId) {
+    try {
+      const history = await api.getPatientClinicalHistory(patientId, { limit: 10 });
+      const container = document.getElementById('clinicalHistoryList');
+
+      if (!history || history.length === 0) {
+        container.innerHTML = '<p style="color: var(--gray-600);">No hay registros anteriores</p>';
+        return;
+      }
+
+      container.innerHTML = `
+        <h3 style="margin-bottom: 1rem;">📚 Historial Clínico</h3>
+        <div style="display: grid; gap: 1rem;">
+          ${history.map(record => `
+            <div style="background: var(--gray-50); padding: 1rem; border-radius: 0.75rem; cursor: pointer;"
+              onclick="app.viewHistoricalRecord('${record._id}')">
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                  <strong>${new Date(record.recordDate).toLocaleDateString('es-ES')}</strong>
+                  <p style="font-size: 0.875rem; color: var(--gray-600); margin-top: 0.25rem;">
+                    ${record.diseaseActivity?.das28?.score ? `DAS28: ${record.diseaseActivity.das28.score}` : ''}
+                    ${record.demographics?.weight ? `| Peso: ${record.demographics.weight}kg` : ''}
+                    ${record.adherenceEvaluation?.adherencePercentage ? `| Adherencia: ${record.adherenceEvaluation.adherencePercentage}%` : ''}
+                  </p>
+                </div>
+                <button class="btn btn-sm btn-outline" onclick="event.stopPropagation(); app.compareRecords('${record._id}')">
+                  🔍 Comparar
+                </button>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    } catch (error) {
+      document.getElementById('clinicalHistoryList').innerHTML =
+        '<p style="color: var(--danger);">Error cargando historial</p>';
+    }
+  }
+
+  async savePatientChanges(patientId, patient, existingRecord) {
+    try {
+      // 1. Actualizar datos básicos del usuario
+      const basicData = {
+        name: document.getElementById('editPatientName').value,
+        email: document.getElementById('editPatientEmail').value,
+        phone: document.getElementById('editPatientPhone').value,
+        dateOfBirth: document.getElementById('editPatientDOB').value || null,
+        gender: document.getElementById('editPatientGender').value || null,
+        diseases: document.getElementById('editPatientDiseases').value.split(',').map(d => d.trim()).filter(d => d)
+      };
+
+      await api.updateUser(patientId, basicData);
+
+      // 2. Crear nuevo registro de historial clínico
+      const clinicalData = this.collectClinicalData();
+
+      if (Object.keys(clinicalData).length > 0) {
+        await api.createClinicalRecord(patientId, clinicalData);
+      }
+
+      this.showMessage('✅ Paciente actualizado correctamente', 'success');
+      document.querySelector('.modal').remove();
+      this.showAdminSection('patients');
+
+    } catch (error) {
+      this.showMessage('Error guardando cambios: ' + error.message, 'error');
+    }
+  }
+
+  collectClinicalData() {
+    const data = {
+      demographics: {},
+      clinicalHistory: {},
+      currentTreatment: {
+        fame: [],
+        biologics: [],
+        supplements: []
+      },
+      diseaseActivity: {},
+      adherenceEvaluation: {},
+      professionalNotes: {}
+    };
+
+    // Demografía
+    const weight = document.getElementById('clinicalWeight')?.value;
+    const height = document.getElementById('clinicalHeight')?.value;
+    if (weight) data.demographics.weight = parseFloat(weight);
+    if (height) data.demographics.height = parseFloat(height);
+
+    const profession = document.getElementById('clinicalProfession')?.value;
+    if (profession) data.demographics.profession = profession;
+
+    const employment = document.getElementById('clinicalEmployment')?.value;
+    if (employment) data.demographics.employmentStatus = employment;
+
+    // Historia Clínica
+    const arDate = document.getElementById('clinicalARDate')?.value;
+    if (arDate) data.clinicalHistory.arDiagnosisDate = arDate;
+
+    const rf = document.getElementById('clinicalRF')?.value;
+    if (rf) data.clinicalHistory.rheumatoidFactor = rf;
+
+    const antiCCP = document.getElementById('clinicalAntiCCP')?.value;
+    if (antiCCP) data.clinicalHistory.antiCCP = antiCCP;
+
+    // Actividad de la enfermedad
+    const tenderJoints = document.getElementById('activityTenderJoints')?.value;
+    if (tenderJoints) data.diseaseActivity.tenderJointsCount = parseInt(tenderJoints);
+
+    const swollenJoints = document.getElementById('activitySwollenJoints')?.value;
+    if (swollenJoints) data.diseaseActivity.swollenJointsCount = parseInt(swollenJoints);
+
+    const das28 = document.getElementById('activityDAS28')?.value;
+    if (das28) {
+      data.diseaseActivity.das28 = {
+        score: parseFloat(das28),
+        classification: this.classifyDAS28(parseFloat(das28))
+      };
+    }
+
+    const vsg = document.getElementById('activityVSG')?.value;
+    const crp = document.getElementById('activityCRP')?.value;
+    if (vsg || crp) {
+      data.diseaseActivity.labResults = {};
+      if (vsg) data.diseaseActivity.labResults.vsg = parseFloat(vsg);
+      if (crp) data.diseaseActivity.labResults.crp = parseFloat(crp);
+      data.diseaseActivity.labResults.date = new Date();
+    }
+
+    // Adherencia
+    const adherenceOverall = document.getElementById('adherenceOverall')?.value;
+    if (adherenceOverall) data.adherenceEvaluation.overallAdherence = adherenceOverall;
+
+    const adherencePerc = document.getElementById('adherencePercentage')?.value;
+    if (adherencePerc) data.adherenceEvaluation.adherencePercentage = parseInt(adherencePerc);
+
+    // Notas profesionales
+    const notes = document.getElementById('professionalNotes')?.value;
+    if (notes) data.professionalNotes.clinicalNotes = notes;
+
+    return data;
+  }
+
+  classifyDAS28(score) {
+    if (score < 2.6) return 'remision';
+    if (score < 3.2) return 'baja';
+    if (score < 5.1) return 'moderada';
+    return 'alta';
+  }
+
+  async exportPatientData(patientId) {
+    try {
+      const data = await api.exportClinicalHistory(patientId, { format: 'json' });
+
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `historial_paciente_${patientId}_${new Date().toISOString().split('T')[0]}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      this.showMessage('✅ Datos exportados correctamente', 'success');
+    } catch (error) {
+      this.showMessage('Error exportando datos: ' + error.message, 'error');
+    }
+  }
+
+  async viewHistoricalRecord(recordId) {
+    // Implementar visualización de registro histórico individual
+    this.showMessage('Visualización de registro histórico en desarrollo', 'info');
+  }
+
+  async compareRecords(recordId) {
+    // Implementar comparación de registros
+    this.showMessage('Comparación de registros en desarrollo', 'info');
+  }
 }
+
 
 const app = new FarmaFollowApp();
 document.addEventListener('DOMContentLoaded', () => app.init());
