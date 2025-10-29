@@ -441,6 +441,89 @@ class API {
   async getQuestionnaireDiseases() {
     return await this.request('/questionnaires/utils/diseases');
   }
+
+  // ===== HISTORIAL CLÍNICO =====
+
+  // Crear registro de historial clínico
+  async createClinicalRecord(patientId, data) {
+    return await this.request(`/clinical-history/patient/${patientId}`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  // Obtener todo el historial de un paciente
+  async getPatientClinicalHistory(patientId, options = {}) {
+    const params = new URLSearchParams();
+    if (options.startDate) params.append('startDate', options.startDate);
+    if (options.endDate) params.append('endDate', options.endDate);
+    if (options.limit) params.append('limit', options.limit);
+
+    const query = params.toString();
+    return await this.request(`/clinical-history/patient/${patientId}${query ? '?' + query : ''}`);
+  }
+
+  // Obtener registro más reciente de un paciente
+  async getLatestClinicalRecord(patientId) {
+    return await this.request(`/clinical-history/patient/${patientId}/latest`);
+  }
+
+  // Obtener un registro específico
+  async getClinicalRecord(recordId) {
+    return await this.request(`/clinical-history/record/${recordId}`);
+  }
+
+  // Actualizar un registro de historial
+  async updateClinicalRecord(recordId, data) {
+    return await this.request(`/clinical-history/record/${recordId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  // Eliminar (desactivar) un registro
+  async deleteClinicalRecord(recordId) {
+    return await this.request(`/clinical-history/record/${recordId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // Obtener evolución de un parámetro específico
+  async getParameterEvolution(patientId, parameter, options = {}) {
+    const params = new URLSearchParams();
+    if (options.startDate) params.append('startDate', options.startDate);
+    if (options.endDate) params.append('endDate', options.endDate);
+
+    const query = params.toString();
+    return await this.request(
+      `/clinical-history/patient/${patientId}/evolution/${parameter}${query ? '?' + query : ''}`
+    );
+  }
+
+  // Exportar historial completo
+  async exportClinicalHistory(patientId, options = {}) {
+    const params = new URLSearchParams();
+    if (options.format) params.append('format', options.format); // 'json' o 'csv'
+    if (options.anonymize) params.append('anonymize', 'true');
+
+    const query = params.toString();
+    return await this.request(
+      `/clinical-history/patient/${patientId}/export${query ? '?' + query : ''}`
+    );
+  }
+
+  // Comparar dos registros
+  async compareClinicalRecords(recordId1, recordId2) {
+    return await this.request('/clinical-history/compare', {
+      method: 'POST',
+      body: JSON.stringify({ recordId1, recordId2 }),
+    });
+  }
+
+  // Obtener estadísticas poblacionales
+  async getPopulationStats() {
+    return await this.request('/clinical-history/stats/population');
+  }
 }
 
 // Crear instancia global

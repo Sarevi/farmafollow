@@ -19,7 +19,7 @@ class FarmaFollowApp {
 
   async init() {
     logger.log('Inicializando aplicación...');
-    
+
     const token = localStorage.getItem('token');
     if (token) {
       try {
@@ -27,8 +27,12 @@ class FarmaFollowApp {
         if (this.user.role === 'admin') {
           this.showScreen('admin-dashboard');
         } else {
-          this.showScreen('dashboard');
-          this.startReminderChecker();
+          // Verificar cuestionarios pendientes ANTES de mostrar dashboard
+          const hasPending = await this.checkPendingQuestionnaires();
+          if (!hasPending) {
+            this.showScreen('dashboard');
+            this.startReminderChecker();
+          }
         }
       } catch (error) {
         logger.error('Error verificando autenticación:', error);
@@ -371,12 +375,16 @@ class FarmaFollowApp {
     try {
       const response = await api.login(email, password);
       this.user = response.user;
-      
+
       if (this.user.role === 'admin') {
         this.showScreen('admin-dashboard');
       } else {
-        this.showScreen('dashboard');
-        this.startReminderChecker();
+        // Verificar cuestionarios pendientes ANTES de mostrar dashboard
+        const hasPending = await this.checkPendingQuestionnaires();
+        if (!hasPending) {
+          this.showScreen('dashboard');
+          this.startReminderChecker();
+        }
       }
     } catch (error) {
       this.showMessage('Error: ' + error.message, 'error');
@@ -881,9 +889,6 @@ class FarmaFollowApp {
         ? Math.round(users.reduce((sum, u) => sum + (u.adherenceRate || 0), 0) / users.length)
         : 0;
 
-      // Calcular pacientes con baja adherencia
-      const lowAdherenceCount = users.filter(u => (u.adherenceRate || 0) < 70).length;
-
       container.innerHTML = `
         <div class="admin-header">
           <h1 class="admin-title">📊 Panel de Administración</h1>
@@ -914,11 +919,6 @@ class FarmaFollowApp {
             <div class="stat-icon" style="font-size: 2rem; margin-bottom: 0.5rem;">📋</div>
             <div class="stat-value">${activeQuestionnaires}</div>
             <div class="stat-label">Cuestionarios Activos</div>
-          </div>
-          <div class="stat-card" style="background: linear-gradient(135deg, var(--danger) 0%, #dc2626 100%);">
-            <div class="stat-icon" style="font-size: 2rem; margin-bottom: 0.5rem;">⚠️</div>
-            <div class="stat-value">${lowAdherenceCount}</div>
-            <div class="stat-label">Adherencia Baja</div>
           </div>
         </div>
 
@@ -1177,8 +1177,96 @@ class FarmaFollowApp {
   }
 
   async editPatient(patientId) {
-    // TODO: Implementar modal de edición similar al de creación
-    this.showMessage('Funcionalidad de edición disponible próximamente', 'info');
+    try {
+      // Cerrar modal actual si existe
+      document.querySelector('.modal')?.remove();
+
+      const [patient, medications, clinicalRecord] = await Promise.all([
+        api.getUserProfile(patientId),
+        api.getMedications(),
+        api.getLatestClinicalRecord(patientId).catch(() => null)
+      ]);
+
+      const modal = document.createElement('div');
+      modal.className = 'modal active';
+      modal.innerHTML = `
+        <div class="modal-content" style="max-width: 1000px; max-height: 90vh; overflow-y: auto;">
+          <div class="modal-header">
+            <h2>✏️ Editar Paciente: ${patient.patient?.name || 'Sin nombre'}</h2>
+            <button class="close-btn" onclick="this.closest('.modal').remove()">×</button>
+          </div>
+
+          <div style="display: flex; gap: 1rem; margin-bottom: 1rem; border-bottom: 2px solid var(--gray-200);">
+            <button class="tab-btn active" data-tab="basic" onclick="app.switchEditTab('basic')">
+              📋 Datos Básicos
+            </button>
+            <button class="tab-btn" data-tab="clinical" onclick="app.switchEditTab('clinical')">
+              🏥 Historia Clínica
+            </button>
+            <button class="tab-btn" data-tab="treatment" onclick="app.switchEditTab('treatment')">
+              💊 Tratamiento
+            </button>
+            <button class="tab-btn" data-tab="activity" onclick="app.switchEditTab('activity')">
+              📈 Actividad
+            </button>
+            <button class="tab-btn" data-tab="history" onclick="app.switchEditTab('history')">
+              📚 Historial
+            </button>
+          </div>
+
+          <form id="editPatientForm">
+            <!-- TAB: Datos Básicos -->
+            <div class="tab-content active" data-tab-content="basic">
+              ${this.renderBasicInfoForm(patient.patient)}
+            </div>
+
+            <!-- TAB: Historia Clínica -->
+            <div class="tab-content hidden" data-tab-content="clinical">
+              ${this.renderClinicalHistoryForm(clinicalRecord)}
+            </div>
+
+            <!-- TAB: Tratamiento -->
+            <div class="tab-content hidden" data-tab-content="treatment">
+              ${this.renderTreatmentForm(clinicalRecord, medications)}
+            </div>
+
+            <!-- TAB: Actividad de la Enfermedad -->
+            <div class="tab-content hidden" data-tab-content="activity">
+              ${this.renderDiseaseActivityForm(clinicalRecord)}
+            </div>
+
+            <!-- TAB: Historial -->
+            <div class="tab-content hidden" data-tab-content="history">
+              <div id="clinicalHistoryList">Cargando historial...</div>
+            </div>
+
+            <div class="modal-actions" style="margin-top: 2rem; padding-top: 1rem; border-top: 2px solid var(--gray-200);">
+              <button type="submit" class="btn btn-primary">💾 Guardar Cambios</button>
+              <button type="button" class="btn" style="background: var(--cyan);" onclick="app.exportPatientData('${patientId}')">
+                📥 Exportar Datos
+              </button>
+              <button type="button" class="btn btn-secondary" onclick="this.closest('.modal').remove()">
+                Cancelar
+              </button>
+            </div>
+          </form>
+        </div>
+      `;
+
+      document.body.appendChild(modal);
+
+      // Cargar historial si existe
+      this.loadClinicalHistory(patientId);
+
+      // Event listener para el formulario
+      document.getElementById('editPatientForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        await this.savePatientChanges(patientId, patient.patient, clinicalRecord);
+      });
+
+    } catch (error) {
+      this.showMessage('Error cargando datos del paciente: ' + error.message, 'error');
+    }
   }
 
   async viewPatientDetail(patientId) {
@@ -1526,7 +1614,167 @@ class FarmaFollowApp {
   }
 
   async editMedication(medicationId) {
-    this.showMessage('Funcionalidad de edición disponible próximamente', 'info');
+    try {
+      // Cerrar modal actual
+      document.querySelector('.modal')?.remove();
+
+      const medication = await api.getMedication(medicationId);
+
+      const modal = document.createElement('div');
+      modal.className = 'modal active';
+      modal.innerHTML = `
+        <div class="modal-content" style="max-width: 700px; max-height: 90vh; overflow-y: auto;">
+          <div class="modal-header">
+            <h2>✏️ Editar Medicamento: ${medication.name}</h2>
+            <button class="close-btn" onclick="this.closest('.modal').remove()">×</button>
+          </div>
+
+          <form id="editMedicationForm">
+            <div class="form-group">
+              <label class="form-label">Nombre del Medicamento *</label>
+              <input type="text" id="editMedName" class="form-input" value="${medication.name}" required>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Descripción *</label>
+              <textarea id="editMedDescription" class="form-textarea" rows="3" required>${medication.description}</textarea>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Principio Activo</label>
+              <input type="text" id="editMedActiveIngredient" class="form-input" value="${medication.activeIngredient || ''}">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">URL del Video (YouTube)</label>
+              <input type="url" id="editMedVideoUrl" class="form-input" value="${medication.videoUrl || ''}"
+                placeholder="https://youtube.com/...">
+            </div>
+
+            <hr style="margin: 1.5rem 0;">
+
+            <div style="background: var(--gray-50); padding: 1.5rem; border-radius: 0.75rem; margin-bottom: 1rem;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                <h3 style="margin: 0;">❓ Preguntas Frecuentes (FAQs)</h3>
+                <button type="button" class="btn btn-sm btn-success" onclick="app.addFAQInEditModal()">
+                  + Agregar FAQ
+                </button>
+              </div>
+
+              <div id="faqsEditList">
+                ${medication.faqs && medication.faqs.length > 0 ? medication.faqs.map((faq, index) => `
+                  <div class="faq-edit-item" data-faq-index="${index}" style="background: white; padding: 1rem; border-radius: 0.5rem; margin-bottom: 0.75rem; border: 1px solid var(--gray-200);">
+                    <div style="display: flex; justify-content: between; align-items: start; gap: 0.5rem;">
+                      <div style="flex: 1;">
+                        <input type="text" class="form-input" style="margin-bottom: 0.5rem;"
+                          value="${faq.question}" data-faq-question="${index}" placeholder="Pregunta">
+                        <textarea class="form-textarea" rows="2"
+                          data-faq-answer="${index}" placeholder="Respuesta">${faq.answer}</textarea>
+                        <input type="hidden" data-faq-id="${index}" value="${faq._id || ''}">
+                      </div>
+                      <button type="button" class="btn btn-sm btn-danger" onclick="this.closest('.faq-edit-item').remove()" title="Eliminar">
+                        🗑️
+                      </button>
+                    </div>
+                  </div>
+                `).join('') : '<p style="color: var(--gray-500); text-align: center;">No hay FAQs aún. Haz clic en "+ Agregar FAQ" para añadir.</p>'}
+              </div>
+            </div>
+
+            <div class="modal-actions">
+              <button type="submit" class="btn btn-primary">💾 Guardar Cambios</button>
+              <button type="button" class="btn btn-secondary" onclick="this.closest('.modal').remove()">
+                Cancelar
+              </button>
+            </div>
+          </form>
+        </div>
+      `;
+
+      document.body.appendChild(modal);
+
+      document.getElementById('editMedicationForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        await this.saveMedicationChanges(medicationId);
+      });
+
+    } catch (error) {
+      this.showMessage('Error cargando medicamento: ' + error.message, 'error');
+    }
+  }
+
+  addFAQInEditModal() {
+    const container = document.getElementById('faqsEditList');
+
+    // Remover mensaje de "no hay FAQs" si existe
+    const emptyMsg = container.querySelector('p');
+    if (emptyMsg) emptyMsg.remove();
+
+    const index = container.querySelectorAll('.faq-edit-item').length;
+
+    const faqItem = document.createElement('div');
+    faqItem.className = 'faq-edit-item';
+    faqItem.setAttribute('data-faq-index', index);
+    faqItem.style = 'background: white; padding: 1rem; border-radius: 0.5rem; margin-bottom: 0.75rem; border: 1px solid var(--gray-200);';
+    faqItem.innerHTML = `
+      <div style="display: flex; justify-content: between; align-items: start; gap: 0.5rem;">
+        <div style="flex: 1;">
+          <input type="text" class="form-input" style="margin-bottom: 0.5rem;"
+            data-faq-question="${index}" placeholder="Pregunta">
+          <textarea class="form-textarea" rows="2"
+            data-faq-answer="${index}" placeholder="Respuesta"></textarea>
+          <input type="hidden" data-faq-id="${index}" value="">
+        </div>
+        <button type="button" class="btn btn-sm btn-danger" onclick="this.closest('.faq-edit-item').remove()" title="Eliminar">
+          🗑️
+        </button>
+      </div>
+    `;
+
+    container.appendChild(faqItem);
+  }
+
+  async saveMedicationChanges(medicationId) {
+    try {
+      const name = document.getElementById('editMedName').value;
+      const description = document.getElementById('editMedDescription').value;
+      const activeIngredient = document.getElementById('editMedActiveIngredient').value;
+      const videoUrl = document.getElementById('editMedVideoUrl').value;
+
+      // Recoger FAQs
+      const faqItems = document.querySelectorAll('.faq-edit-item');
+      const faqs = [];
+
+      faqItems.forEach((item, index) => {
+        const question = item.querySelector(`[data-faq-question="${index}"]`)?.value;
+        const answer = item.querySelector(`[data-faq-answer="${index}"]`)?.value;
+        const faqId = item.querySelector(`[data-faq-id="${index}"]`)?.value;
+
+        if (question && answer) {
+          faqs.push({
+            _id: faqId || undefined,
+            question: question.trim(),
+            answer: answer.trim()
+          });
+        }
+      });
+
+      // Actualizar medicamento
+      await api.updateMedication(medicationId, {
+        name,
+        description,
+        activeIngredient,
+        videoUrl,
+        faqs
+      });
+
+      this.showMessage('✅ Medicamento actualizado correctamente', 'success');
+      document.querySelector('.modal').remove();
+      this.showAdminSection('medications');
+
+    } catch (error) {
+      this.showMessage('Error guardando cambios: ' + error.message, 'error');
+    }
   }
 
   async deleteMedication(medicationId) {
@@ -2023,12 +2271,24 @@ class FarmaFollowApp {
   }
 
   async assignQuestionnaireModal(questionnaireId) {
-    const patients = await api.getUsers();
+    const [patients, medications] = await Promise.all([
+      api.getUsers(),
+      api.getMedications()
+    ]);
+
+    // Obtener enfermedades únicas
+    const allDiseases = new Set();
+    patients.forEach(p => {
+      if (p.diseases && Array.isArray(p.diseases)) {
+        p.diseases.forEach(d => allDiseases.add(d));
+      }
+    });
+    const diseases = Array.from(allDiseases).sort();
 
     const modal = document.createElement('div');
     modal.className = 'modal active';
     modal.innerHTML = `
-      <div class="modal-content">
+      <div class="modal-content" style="max-width: 600px;">
         <div class="modal-header">
           <h2>📤 Asignar Cuestionario</h2>
           <button class="close-btn" onclick="this.closest('.modal').remove()">×</button>
@@ -2036,17 +2296,65 @@ class FarmaFollowApp {
 
         <form id="assignQuestionnaireForm">
           <div class="form-group">
-            <label class="form-label">Selecciona Pacientes</label>
-            <select id="selectedPatients" class="form-select" multiple style="min-height: 200px;" required>
-              ${patients.map(p => `
-                <option value="${p._id}">${p.name} - ${p.email}</option>
-              `).join('')}
+            <label class="form-label">Tipo de Asignación</label>
+            <select id="assignmentType" class="form-select" onchange="app.changeAssignmentType()">
+              <option value="specific">Pacientes Específicos</option>
+              <option value="medication">Todos con un Tratamiento</option>
+              <option value="disease">Todos con una Enfermedad</option>
+              <option value="all">Todos los Pacientes</option>
             </select>
-            <small style="color: var(--gray-600);">Mantén Ctrl (Cmd en Mac) para seleccionar múltiples</small>
+          </div>
+
+          <!-- Pacientes específicos -->
+          <div id="specificPatientsSection" class="assignment-section">
+            <div class="form-group">
+              <label class="form-label">Selecciona Pacientes</label>
+              <select id="selectedPatients" class="form-select" multiple style="min-height: 200px;">
+                ${patients.map(p => `
+                  <option value="${p._id}">${p.name} - ${p.email}</option>
+                `).join('')}
+              </select>
+              <small style="color: var(--gray-600);">Mantén Ctrl (Cmd en Mac) para seleccionar múltiples</small>
+            </div>
+          </div>
+
+          <!-- Por medicamento -->
+          <div id="medicationSection" class="assignment-section hidden">
+            <div class="form-group">
+              <label class="form-label">Selecciona Medicamento/Tratamiento</label>
+              <select id="selectedMedication" class="form-select">
+                <option value="">Seleccionar...</option>
+                ${medications.map(m => `
+                  <option value="${m._id}">${m.name}</option>
+                `).join('')}
+              </select>
+              <p id="medicationPatientsCount" style="margin-top: 0.5rem; color: var(--gray-600); font-size: 0.875rem;"></p>
+            </div>
+          </div>
+
+          <!-- Por enfermedad -->
+          <div id="diseaseSection" class="assignment-section hidden">
+            <div class="form-group">
+              <label class="form-label">Selecciona Enfermedad</label>
+              <select id="selectedDisease" class="form-select">
+                <option value="">Seleccionar...</option>
+                ${diseases.map(d => `
+                  <option value="${d}">${d}</option>
+                `).join('')}
+              </select>
+              <p id="diseasePatientsCount" style="margin-top: 0.5rem; color: var(--gray-600); font-size: 0.875rem;"></p>
+            </div>
+          </div>
+
+          <!-- Todos los pacientes -->
+          <div id="allPatientsSection" class="assignment-section hidden">
+            <div style="padding: 1rem; background: var(--warning); color: white; border-radius: 0.5rem;">
+              <p style="margin: 0;">⚠️ Se asignará el cuestionario a <strong>TODOS los ${patients.length} pacientes</strong></p>
+            </div>
           </div>
 
           <div class="modal-actions">
-            <button type="submit" class="btn btn-success">Asignar</button>
+            <button type="submit" class="btn btn-success">📤 Asignar Cuestionario</button>
             <button type="button" class="btn btn-secondary" onclick="this.closest('.modal').remove()">Cancelar</button>
           </div>
         </form>
@@ -2055,25 +2363,106 @@ class FarmaFollowApp {
 
     document.body.appendChild(modal);
 
-    document.getElementById('assignQuestionnaireForm').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const select = document.getElementById('selectedPatients');
-      const patientIds = Array.from(select.selectedOptions).map(opt => opt.value);
-
-      if (patientIds.length === 0) {
-        this.showMessage('Selecciona al menos un paciente', 'warning');
-        return;
-      }
-
-      try {
-        const result = await api.assignQuestionnaire(questionnaireId, patientIds);
-        this.showMessage(`✅ Cuestionario asignado a ${result.assigned} paciente(s)`, 'success');
-        document.querySelectorAll('.modal').forEach(m => m.remove());
-        this.showAdminSection('questionnaires');
-      } catch (error) {
-        this.showMessage('Error asignando cuestionario: ' + error.message, 'error');
+    // Event listeners
+    document.getElementById('selectedMedication').addEventListener('change', async (e) => {
+      const medicationId = e.target.value;
+      if (medicationId) {
+        const medication = await api.getMedication(medicationId);
+        const count = medication.patients ? medication.patients.length : 0;
+        document.getElementById('medicationPatientsCount').textContent =
+          `Se asignará a ${count} paciente(s) con este tratamiento`;
       }
     });
+
+    document.getElementById('selectedDisease').addEventListener('change', (e) => {
+      const disease = e.target.value;
+      if (disease) {
+        const count = patients.filter(p => p.diseases && p.diseases.includes(disease)).length;
+        document.getElementById('diseasePatientsCount').textContent =
+          `Se asignará a ${count} paciente(s) con esta enfermedad`;
+      }
+    });
+
+    document.getElementById('assignQuestionnaireForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      await this.processQuestionnaireAssignment(questionnaireId, patients);
+    });
+  }
+
+  changeAssignmentType() {
+    const type = document.getElementById('assignmentType').value;
+
+    // Ocultar todas las secciones
+    document.querySelectorAll('.assignment-section').forEach(s => s.classList.add('hidden'));
+
+    // Mostrar la sección correspondiente
+    const sections = {
+      'specific': 'specificPatientsSection',
+      'medication': 'medicationSection',
+      'disease': 'diseaseSection',
+      'all': 'allPatientsSection'
+    };
+
+    document.getElementById(sections[type]).classList.remove('hidden');
+  }
+
+  async processQuestionnaireAssignment(questionnaireId, allPatients) {
+    const type = document.getElementById('assignmentType').value;
+    let patientIds = [];
+
+    try {
+      switch(type) {
+        case 'specific':
+          const select = document.getElementById('selectedPatients');
+          patientIds = Array.from(select.selectedOptions).map(opt => opt.value);
+          if (patientIds.length === 0) {
+            this.showMessage('Selecciona al menos un paciente', 'warning');
+            return;
+          }
+          break;
+
+        case 'medication':
+          const medicationId = document.getElementById('selectedMedication').value;
+          if (!medicationId) {
+            this.showMessage('Selecciona un medicamento', 'warning');
+            return;
+          }
+          const medication = await api.getMedication(medicationId);
+          patientIds = medication.patients || [];
+          if (patientIds.length === 0) {
+            this.showMessage('No hay pacientes con este medicamento', 'warning');
+            return;
+          }
+          break;
+
+        case 'disease':
+          const disease = document.getElementById('selectedDisease').value;
+          if (!disease) {
+            this.showMessage('Selecciona una enfermedad', 'warning');
+            return;
+          }
+          patientIds = allPatients
+            .filter(p => p.diseases && p.diseases.includes(disease))
+            .map(p => p._id);
+          if (patientIds.length === 0) {
+            this.showMessage('No hay pacientes con esta enfermedad', 'warning');
+            return;
+          }
+          break;
+
+        case 'all':
+          patientIds = allPatients.map(p => p._id);
+          break;
+      }
+
+      const result = await api.assignQuestionnaire(questionnaireId, patientIds);
+      this.showMessage(`✅ Cuestionario asignado a ${result.assigned} paciente(s)`, 'success');
+      document.querySelectorAll('.modal').forEach(m => m.remove());
+      this.showAdminSection('questionnaires');
+
+    } catch (error) {
+      this.showMessage('Error asignando cuestionario: ' + error.message, 'error');
+    }
   }
 
   async activateQuestionnaire(questionnaireId) {
@@ -2128,7 +2517,805 @@ class FarmaFollowApp {
     this.stopReminderChecker();
     this.showScreen('login');
   }
+
+  // ===== FUNCIONES PARA EDICIÓN DE PACIENTES CON HISTORIAL CLÍNICO =====
+
+  switchEditTab(tabName) {
+    // Ocultar todos los tabs
+    document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(content => {
+      content.classList.remove('active');
+      content.classList.add('hidden');
+    });
+
+    // Mostrar tab seleccionado
+    document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
+    const content = document.querySelector(`[data-tab-content="${tabName}"]`);
+    content.classList.remove('hidden');
+    content.classList.add('active');
+  }
+
+  renderBasicInfoForm(patient) {
+    return `
+      <h3 style="margin-bottom: 1rem; color: var(--primary);">📋 Datos Personales</h3>
+
+      <div class="form-group">
+        <label class="form-label">Nombre Completo *</label>
+        <input type="text" id="editPatientName" class="form-input" value="${patient?.name || ''}" required>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+        <div class="form-group">
+          <label class="form-label">Email *</label>
+          <input type="email" id="editPatientEmail" class="form-input" value="${patient?.email || ''}" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Teléfono</label>
+          <input type="tel" id="editPatientPhone" class="form-input" value="${patient?.phone || ''}">
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+        <div class="form-group">
+          <label class="form-label">Fecha de Nacimiento</label>
+          <input type="date" id="editPatientDOB" class="form-input" value="${patient?.dateOfBirth ? new Date(patient.dateOfBirth).toISOString().split('T')[0] : ''}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Género</label>
+          <select id="editPatientGender" class="form-select">
+            <option value="">Seleccionar...</option>
+            <option value="masculino" ${patient?.gender === 'masculino' ? 'selected' : ''}>Masculino</option>
+            <option value="femenino" ${patient?.gender === 'femenino' ? 'selected' : ''}>Femenino</option>
+            <option value="otro" ${patient?.gender === 'otro' ? 'selected' : ''}>Otro</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Enfermedades</label>
+        <input type="text" id="editPatientDiseases" class="form-input" value="${patient?.diseases?.join(', ') || ''}"
+          placeholder="Ej: Artritis reumatoide, Diabetes tipo 2">
+        <small style="color: var(--gray-600);">Separar con comas</small>
+      </div>
+    `;
+  }
+
+  renderClinicalHistoryForm(record) {
+    return `
+      <h3 style="margin-bottom: 1rem; color: var(--primary);">🏥 Historia Clínica</h3>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem;">
+        <div class="form-group">
+          <label class="form-label">Peso (kg)</label>
+          <input type="number" id="clinicalWeight" class="form-input" step="0.1"
+            value="${record?.demographics?.weight || ''}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Altura (cm)</label>
+          <input type="number" id="clinicalHeight" class="form-input" step="0.1"
+            value="${record?.demographics?.height || ''}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">IMC</label>
+          <input type="number" id="clinicalBMI" class="form-input" step="0.1" readonly
+            value="${record?.demographics?.bmi || ''}">
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+        <div class="form-group">
+          <label class="form-label">Profesión</label>
+          <input type="text" id="clinicalProfession" class="form-input"
+            value="${record?.demographics?.profession || ''}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Situación Laboral</label>
+          <select id="clinicalEmployment" class="form-select">
+            <option value="">Seleccionar...</option>
+            <option value="empleado" ${record?.demographics?.employmentStatus === 'empleado' ? 'selected' : ''}>Empleado</option>
+            <option value="desempleado" ${record?.demographics?.employmentStatus === 'desempleado' ? 'selected' : ''}>Desempleado</option>
+            <option value="jubilado" ${record?.demographics?.employmentStatus === 'jubilado' ? 'selected' : ''}>Jubilado</option>
+            <option value="estudiante" ${record?.demographics?.employmentStatus === 'estudiante' ? 'selected' : ''}>Estudiante</option>
+          </select>
+        </div>
+      </div>
+
+      <h4 style="margin-top: 1.5rem; margin-bottom: 1rem; color: var(--primary);">Artritis Reumatoide</h4>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem;">
+        <div class="form-group">
+          <label class="form-label">Fecha Diagnóstico AR</label>
+          <input type="date" id="clinicalARDate" class="form-input"
+            value="${record?.clinicalHistory?.arDiagnosisDate ? new Date(record.clinicalHistory.arDiagnosisDate).toISOString().split('T')[0] : ''}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Factor Reumatoide</label>
+          <select id="clinicalRF" class="form-select">
+            <option value="">No realizado</option>
+            <option value="positivo" ${record?.clinicalHistory?.rheumatoidFactor === 'positivo' ? 'selected' : ''}>Positivo</option>
+            <option value="negativo" ${record?.clinicalHistory?.rheumatoidFactor === 'negativo' ? 'selected' : ''}>Negativo</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Anti-CCP</label>
+          <select id="clinicalAntiCCP" class="form-select">
+            <option value="">No realizado</option>
+            <option value="positivo" ${record?.clinicalHistory?.antiCCP === 'positivo' ? 'selected' : ''}>Positivo</option>
+            <option value="negativo" ${record?.clinicalHistory?.antiCCP === 'negativo' ? 'selected' : ''}>Negativo</option>
+          </select>
+        </div>
+      </div>
+
+      <h4 style="margin-top: 1.5rem; margin-bottom: 1rem; color: var(--primary);">Comorbilidades y Alergias</h4>
+
+      <div class="form-group">
+        <label class="form-label">Comorbilidades</label>
+        <textarea id="clinicalComorbidities" class="form-input" rows="3"
+          placeholder="Ej: Hipertensión controlada, Diabetes tipo 2">${record?.clinicalHistory?.comorbidities?.map(c => c.condition).join(', ') || ''}</textarea>
+        <small style="color: var(--gray-600);">Separar con comas</small>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Alergias Medicamentosas</label>
+        <textarea id="clinicalAllergies" class="form-input" rows="3"
+          placeholder="Ej: Penicilina - Reacción cutánea (moderada)">${record?.clinicalHistory?.allergies?.map(a => `${a.medication} - ${a.reaction} (${a.severity})`).join(', ') || ''}</textarea>
+        <small style="color: var(--gray-600);">Formato: Medicamento - Reacción (severidad)</small>
+      </div>
+    `;
+  }
+
+  renderTreatmentForm(record, medications) {
+    return `
+      <h3 style="margin-bottom: 1rem; color: var(--primary);">💊 Tratamiento Actual</h3>
+
+      <h4 style="margin-top: 1rem; margin-bottom: 0.5rem;">FAME (Fármacos Antirreumáticos)</h4>
+      <div id="fameList">
+        ${record?.currentTreatment?.fame?.map((f, i) => `
+          <div class="treatment-item" style="background: var(--gray-50); padding: 1rem; border-radius: 0.5rem; margin-bottom: 0.5rem;">
+            <input type="text" placeholder="Nombre medicamento" class="form-input" style="margin-bottom: 0.5rem;"
+              value="${f.medicationName || ''}" data-fame-name="${i}">
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.5rem;">
+              <input type="text" placeholder="Dosis" class="form-input" value="${f.dose || ''}" data-fame-dose="${i}">
+              <input type="text" placeholder="Frecuencia" class="form-input" value="${f.frequency || ''}" data-fame-freq="${i}">
+              <input type="text" placeholder="Vía" class="form-input" value="${f.route || ''}" data-fame-route="${i}">
+            </div>
+          </div>
+        `).join('') || '<p style="color: var(--gray-600);">No hay FAME registrados</p>'}
+      </div>
+      <button type="button" class="btn btn-sm btn-outline" onclick="app.addTreatmentItem('fame')" style="margin-top: 0.5rem;">+ Añadir FAME</button>
+
+      <h4 style="margin-top: 1.5rem; margin-bottom: 0.5rem;">Biológicos</h4>
+      <div id="biologicsList">
+        ${record?.currentTreatment?.biologics?.map((b, i) => `
+          <div class="treatment-item" style="background: var(--gray-50); padding: 1rem; border-radius: 0.5rem; margin-bottom: 0.5rem;">
+            <input type="text" placeholder="Nombre medicamento" class="form-input" style="margin-bottom: 0.5rem;"
+              value="${b.medicationName || ''}" data-biologic-name="${i}">
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.5rem;">
+              <select class="form-select" data-biologic-type="${i}">
+                <option value="">Tipo...</option>
+                <option value="anti-TNF" ${b.type === 'anti-TNF' ? 'selected' : ''}>Anti-TNF</option>
+                <option value="anti-IL6" ${b.type === 'anti-IL6' ? 'selected' : ''}>Anti-IL6</option>
+                <option value="anti-JAK" ${b.type === 'anti-JAK' ? 'selected' : ''}>Anti-JAK</option>
+              </select>
+              <input type="text" placeholder="Dosis" class="form-input" value="${b.dose || ''}" data-biologic-dose="${i}">
+              <input type="text" placeholder="Frecuencia" class="form-input" value="${b.frequency || ''}" data-biologic-freq="${i}">
+            </div>
+          </div>
+        `).join('') || '<p style="color: var(--gray-600);">No hay biológicos registrados</p>'}
+      </div>
+      <button type="button" class="btn btn-sm btn-outline" onclick="app.addTreatmentItem('biologic')" style="margin-top: 0.5rem;">+ Añadir Biológico</button>
+
+      <h4 style="margin-top: 1.5rem; margin-bottom: 0.5rem;">Suplementos</h4>
+      <div class="form-group">
+        <textarea id="treatmentSupplements" class="form-input" rows="2"
+          placeholder="Ej: Ácido fólico 5mg/día, Calcio + Vitamina D 1 comp/día">${record?.currentTreatment?.supplements?.map(s => `${s.name} ${s.dose} ${s.frequency}`).join(', ') || ''}</textarea>
+      </div>
+    `;
+  }
+
+  renderDiseaseActivityForm(record) {
+    return `
+      <h3 style="margin-bottom: 1rem; color: var(--primary);">📈 Actividad de la Enfermedad</h3>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem;">
+        <div class="form-group">
+          <label class="form-label">Articulaciones Dolorosas</label>
+          <input type="number" id="activityTenderJoints" class="form-input"
+            value="${record?.diseaseActivity?.tenderJointsCount || ''}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Articulaciones Inflamadas</label>
+          <input type="number" id="activitySwollenJoints" class="form-input"
+            value="${record?.diseaseActivity?.swollenJointsCount || ''}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Rigidez Matutina (min)</label>
+          <input type="number" id="activityMorningStiffness" class="form-input"
+            value="${record?.diseaseActivity?.morningStiffness?.duration || ''}">
+        </div>
+      </div>
+
+      <h4 style="margin-top: 1.5rem; margin-bottom: 1rem;">DAS28 y Marcadores</h4>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem;">
+        <div class="form-group">
+          <label class="form-label">DAS28 Score</label>
+          <input type="number" id="activityDAS28" class="form-input" step="0.1"
+            value="${record?.diseaseActivity?.das28?.score || ''}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">VSG (mm/h)</label>
+          <input type="number" id="activityVSG" class="form-input"
+            value="${record?.diseaseActivity?.labResults?.vsg || ''}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">PCR (mg/L)</label>
+          <input type="number" id="activityCRP" class="form-input" step="0.1"
+            value="${record?.diseaseActivity?.labResults?.crp || ''}">
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+        <div class="form-group">
+          <label class="form-label">HAQ Score (0-3)</label>
+          <input type="number" id="activityHAQ" class="form-input" step="0.1" min="0" max="3"
+            value="${record?.diseaseActivity?.haq?.score || ''}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Dolor EVA (0-10)</label>
+          <input type="number" id="activityPain" class="form-input" step="0.5" min="0" max="10"
+            value="${record?.diseaseActivity?.painScale?.score || ''}">
+        </div>
+      </div>
+
+      <h4 style="margin-top: 1.5rem; margin-bottom: 1rem;">Adherencia y Efectos Adversos</h4>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+        <div class="form-group">
+          <label class="form-label">Adherencia General</label>
+          <select id="adherenceOverall" class="form-select">
+            <option value="">Seleccionar...</option>
+            <option value="excelente" ${record?.adherenceEvaluation?.overallAdherence === 'excelente' ? 'selected' : ''}>Excelente</option>
+            <option value="buena" ${record?.adherenceEvaluation?.overallAdherence === 'buena' ? 'selected' : ''}>Buena</option>
+            <option value="regular" ${record?.adherenceEvaluation?.overallAdherence === 'regular' ? 'selected' : ''}>Regular</option>
+            <option value="mala" ${record?.adherenceEvaluation?.overallAdherence === 'mala' ? 'selected' : ''}>Mala</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Adherencia % (0-100)</label>
+          <input type="number" id="adherencePercentage" class="form-input" min="0" max="100"
+            value="${record?.adherenceEvaluation?.adherencePercentage || ''}">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Efectos Adversos Actuales</label>
+        <textarea id="adherenceAdverse" class="form-input" rows="3"
+          placeholder="Ej: Náuseas leves (relacionado con metotrexato)">${record?.adherenceEvaluation?.currentAdverseEffects?.map(e => `${e.effect} ${e.severity} (${e.relatedMedication})`).join(', ') || ''}</textarea>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Notas del Profesional</label>
+        <textarea id="professionalNotes" class="form-input" rows="4"
+          placeholder="Observaciones, plan de seguimiento, intervenciones...">${record?.professionalNotes?.clinicalNotes || ''}</textarea>
+      </div>
+    `;
+  }
+
+  addTreatmentItem(type) {
+    const container = document.getElementById(type === 'fame' ? 'fameList' : 'biologicsList');
+    const index = container.querySelectorAll('.treatment-item').length;
+
+    const item = document.createElement('div');
+    item.className = 'treatment-item';
+    item.style = 'background: var(--gray-50); padding: 1rem; border-radius: 0.5rem; margin-bottom: 0.5rem;';
+
+    if (type === 'fame') {
+      item.innerHTML = `
+        <input type="text" placeholder="Nombre medicamento" class="form-input" style="margin-bottom: 0.5rem;" data-fame-name="${index}">
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.5rem;">
+          <input type="text" placeholder="Dosis" class="form-input" data-fame-dose="${index}">
+          <input type="text" placeholder="Frecuencia" class="form-input" data-fame-freq="${index}">
+          <input type="text" placeholder="Vía" class="form-input" data-fame-route="${index}">
+        </div>
+      `;
+    } else {
+      item.innerHTML = `
+        <input type="text" placeholder="Nombre medicamento" class="form-input" style="margin-bottom: 0.5rem;" data-biologic-name="${index}">
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.5rem;">
+          <select class="form-select" data-biologic-type="${index}">
+            <option value="">Tipo...</option>
+            <option value="anti-TNF">Anti-TNF</option>
+            <option value="anti-IL6">Anti-IL6</option>
+            <option value="anti-JAK">Anti-JAK</option>
+          </select>
+          <input type="text" placeholder="Dosis" class="form-input" data-biologic-dose="${index}">
+          <input type="text" placeholder="Frecuencia" class="form-input" data-biologic-freq="${index}">
+        </div>
+      `;
+    }
+
+    container.appendChild(item);
+  }
+
+  async loadClinicalHistory(patientId) {
+    try {
+      const history = await api.getPatientClinicalHistory(patientId, { limit: 10 });
+      const container = document.getElementById('clinicalHistoryList');
+
+      if (!history || history.length === 0) {
+        container.innerHTML = '<p style="color: var(--gray-600);">No hay registros anteriores</p>';
+        return;
+      }
+
+      container.innerHTML = `
+        <h3 style="margin-bottom: 1rem;">📚 Historial Clínico</h3>
+        <div style="display: grid; gap: 1rem;">
+          ${history.map(record => `
+            <div style="background: var(--gray-50); padding: 1rem; border-radius: 0.75rem; cursor: pointer;"
+              onclick="app.viewHistoricalRecord('${record._id}')">
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                  <strong>${new Date(record.recordDate).toLocaleDateString('es-ES')}</strong>
+                  <p style="font-size: 0.875rem; color: var(--gray-600); margin-top: 0.25rem;">
+                    ${record.diseaseActivity?.das28?.score ? `DAS28: ${record.diseaseActivity.das28.score}` : ''}
+                    ${record.demographics?.weight ? `| Peso: ${record.demographics.weight}kg` : ''}
+                    ${record.adherenceEvaluation?.adherencePercentage ? `| Adherencia: ${record.adherenceEvaluation.adherencePercentage}%` : ''}
+                  </p>
+                </div>
+                <button class="btn btn-sm btn-outline" onclick="event.stopPropagation(); app.compareRecords('${record._id}')">
+                  🔍 Comparar
+                </button>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    } catch (error) {
+      document.getElementById('clinicalHistoryList').innerHTML =
+        '<p style="color: var(--danger);">Error cargando historial</p>';
+    }
+  }
+
+  async savePatientChanges(patientId, patient, existingRecord) {
+    try {
+      // 1. Actualizar datos básicos del usuario
+      const basicData = {
+        name: document.getElementById('editPatientName').value,
+        email: document.getElementById('editPatientEmail').value,
+        phone: document.getElementById('editPatientPhone').value,
+        dateOfBirth: document.getElementById('editPatientDOB').value || null,
+        gender: document.getElementById('editPatientGender').value || null,
+        diseases: document.getElementById('editPatientDiseases').value.split(',').map(d => d.trim()).filter(d => d)
+      };
+
+      await api.updateUser(patientId, basicData);
+
+      // 2. Crear nuevo registro de historial clínico
+      const clinicalData = this.collectClinicalData();
+
+      if (Object.keys(clinicalData).length > 0) {
+        await api.createClinicalRecord(patientId, clinicalData);
+      }
+
+      this.showMessage('✅ Paciente actualizado correctamente', 'success');
+      document.querySelector('.modal').remove();
+      this.showAdminSection('patients');
+
+    } catch (error) {
+      this.showMessage('Error guardando cambios: ' + error.message, 'error');
+    }
+  }
+
+  collectClinicalData() {
+    const data = {
+      demographics: {},
+      clinicalHistory: {},
+      currentTreatment: {
+        fame: [],
+        biologics: [],
+        supplements: []
+      },
+      diseaseActivity: {},
+      adherenceEvaluation: {},
+      professionalNotes: {}
+    };
+
+    // Demografía
+    const weight = document.getElementById('clinicalWeight')?.value;
+    const height = document.getElementById('clinicalHeight')?.value;
+    if (weight) data.demographics.weight = parseFloat(weight);
+    if (height) data.demographics.height = parseFloat(height);
+
+    const profession = document.getElementById('clinicalProfession')?.value;
+    if (profession) data.demographics.profession = profession;
+
+    const employment = document.getElementById('clinicalEmployment')?.value;
+    if (employment) data.demographics.employmentStatus = employment;
+
+    // Historia Clínica
+    const arDate = document.getElementById('clinicalARDate')?.value;
+    if (arDate) data.clinicalHistory.arDiagnosisDate = arDate;
+
+    const rf = document.getElementById('clinicalRF')?.value;
+    if (rf) data.clinicalHistory.rheumatoidFactor = rf;
+
+    const antiCCP = document.getElementById('clinicalAntiCCP')?.value;
+    if (antiCCP) data.clinicalHistory.antiCCP = antiCCP;
+
+    // Actividad de la enfermedad
+    const tenderJoints = document.getElementById('activityTenderJoints')?.value;
+    if (tenderJoints) data.diseaseActivity.tenderJointsCount = parseInt(tenderJoints);
+
+    const swollenJoints = document.getElementById('activitySwollenJoints')?.value;
+    if (swollenJoints) data.diseaseActivity.swollenJointsCount = parseInt(swollenJoints);
+
+    const das28 = document.getElementById('activityDAS28')?.value;
+    if (das28) {
+      data.diseaseActivity.das28 = {
+        score: parseFloat(das28),
+        classification: this.classifyDAS28(parseFloat(das28))
+      };
+    }
+
+    const vsg = document.getElementById('activityVSG')?.value;
+    const crp = document.getElementById('activityCRP')?.value;
+    if (vsg || crp) {
+      data.diseaseActivity.labResults = {};
+      if (vsg) data.diseaseActivity.labResults.vsg = parseFloat(vsg);
+      if (crp) data.diseaseActivity.labResults.crp = parseFloat(crp);
+      data.diseaseActivity.labResults.date = new Date();
+    }
+
+    // Adherencia
+    const adherenceOverall = document.getElementById('adherenceOverall')?.value;
+    if (adherenceOverall) data.adherenceEvaluation.overallAdherence = adherenceOverall;
+
+    const adherencePerc = document.getElementById('adherencePercentage')?.value;
+    if (adherencePerc) data.adherenceEvaluation.adherencePercentage = parseInt(adherencePerc);
+
+    // Notas profesionales
+    const notes = document.getElementById('professionalNotes')?.value;
+    if (notes) data.professionalNotes.clinicalNotes = notes;
+
+    return data;
+  }
+
+  classifyDAS28(score) {
+    if (score < 2.6) return 'remision';
+    if (score < 3.2) return 'baja';
+    if (score < 5.1) return 'moderada';
+    return 'alta';
+  }
+
+  async exportPatientData(patientId) {
+    try {
+      const data = await api.exportClinicalHistory(patientId, { format: 'json' });
+
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `historial_paciente_${patientId}_${new Date().toISOString().split('T')[0]}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      this.showMessage('✅ Datos exportados correctamente', 'success');
+    } catch (error) {
+      this.showMessage('Error exportando datos: ' + error.message, 'error');
+    }
+  }
+
+  async viewHistoricalRecord(recordId) {
+    // Implementar visualización de registro histórico individual
+    this.showMessage('Visualización de registro histórico en desarrollo', 'info');
+  }
+
+  async compareRecords(recordId) {
+    // Implementar comparación de registros
+    this.showMessage('Comparación de registros en desarrollo', 'info');
+  }
+
+  // ===== SISTEMA DE CUESTIONARIOS PENDIENTES =====
+
+  async checkPendingQuestionnaires() {
+    try {
+      const questionnaires = await api.getMyQuestionnaires();
+
+      // Filtrar solo los que están pendientes (asignados pero no completados)
+      const pending = questionnaires.filter(q => q.status === 'assigned' || q.status === 'in_progress');
+
+      if (pending.length > 0) {
+        // Hay cuestionarios pendientes, mostrar alerta
+        this.showQuestionnaireAlert(pending);
+        return true; // Indica que hay pendientes
+      }
+
+      return false; // No hay pendientes
+    } catch (error) {
+      logger.error('Error verificando cuestionarios pendientes:', error);
+      return false; // En caso de error, continuar normal
+    }
+  }
+
+  showQuestionnaireAlert(pendingQuestionnaires) {
+    const container = document.getElementById('app');
+    const firstQuestionnaire = pendingQuestionnaires[0];
+
+    container.innerHTML = `
+      <div class="questionnaire-alert-screen">
+        <div class="questionnaire-alert-card">
+          <div class="alert-icon">📋</div>
+
+          <h1 class="alert-title">¡Tienes ${pendingQuestionnaires.length} cuestionario(s) pendiente(s)!</h1>
+
+          <p class="alert-description">
+            Tu equipo médico ha solicitado que completes el siguiente cuestionario para hacer un mejor seguimiento de tu tratamiento.
+          </p>
+
+          <div class="alert-questionnaire-info">
+            <h3>${firstQuestionnaire.questionnaire?.title || 'Cuestionario'}</h3>
+            <p style="color: var(--gray-600); margin-top: 0.5rem;">
+              ${firstQuestionnaire.questionnaire?.description || 'Cuestionario de seguimiento'}
+            </p>
+            <div style="display: flex; align-items: center; gap: 0.5rem; margin-top: 1rem; color: var(--gray-600);">
+              <span>📝 ${firstQuestionnaire.questionnaire?.questions?.length || 0} preguntas</span>
+              <span>•</span>
+              <span>⏱️ Tiempo estimado: 5-10 minutos</span>
+            </div>
+          </div>
+
+          <div class="alert-actions">
+            <button class="btn btn-primary btn-large" onclick="app.startPendingQuestionnaire('${firstQuestionnaire._id}')">
+              ✅ Completar Ahora
+            </button>
+            ${pendingQuestionnaires.length > 1 ? `
+              <p style="margin-top: 1rem; font-size: 0.875rem; color: var(--gray-600);">
+                Tienes ${pendingQuestionnaires.length - 1} cuestionario(s) más después de este
+              </p>
+            ` : ''}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  async startPendingQuestionnaire(responseId) {
+    try {
+      // Obtener el cuestionario completo
+      const response = await api.startQuestionnaire(responseId);
+      this.currentQuestionnaireResponse = response;
+
+      // Mostrar cuestionario en página completa
+      this.showQuestionnaireFullPage(response);
+
+    } catch (error) {
+      this.showMessage('Error cargando cuestionario: ' + error.message, 'error');
+      // Si hay error, permitir acceso al dashboard
+      this.showScreen('dashboard');
+      this.startReminderChecker();
+    }
+  }
+
+  showQuestionnaireFullPage(response) {
+    const container = document.getElementById('app');
+    const questionnaire = response.questionnaire;
+    const questions = questionnaire.questions || [];
+
+    container.innerHTML = `
+      <div class="questionnaire-full-page">
+        <div class="questionnaire-header">
+          <div class="questionnaire-progress">
+            <div class="progress-bar">
+              <div class="progress-fill" id="questionnaireProgress" style="width: 0%"></div>
+            </div>
+            <span id="progressText">0 de ${questions.length} respondidas</span>
+          </div>
+        </div>
+
+        <div class="questionnaire-container">
+          <div class="questionnaire-title-section">
+            <h1>${questionnaire.title}</h1>
+            <p style="color: var(--gray-600); margin-top: 0.5rem;">
+              ${questionnaire.description}
+            </p>
+          </div>
+
+          <form id="questionnaireFullForm" class="questionnaire-form">
+            ${questions.map((q, index) => this.renderQuestionField(q, index)).join('')}
+
+            <div class="questionnaire-actions" style="margin-top: 2rem; padding-top: 2rem; border-top: 2px solid var(--gray-200);">
+              <button type="submit" class="btn btn-primary btn-large">
+                📤 Enviar Cuestionario
+              </button>
+              <p style="margin-top: 1rem; font-size: 0.875rem; color: var(--gray-600); text-align: center;">
+                Por favor, revisa todas tus respuestas antes de enviar
+              </p>
+            </div>
+          </form>
+        </div>
+      </div>
+    `;
+
+    // Event listeners para actualizar el progreso
+    const form = document.getElementById('questionnaireFullForm');
+    const inputs = form.querySelectorAll('input, select, textarea');
+
+    inputs.forEach(input => {
+      input.addEventListener('change', () => this.updateQuestionnaireProgress(questions.length));
+    });
+
+    // Submit del formulario
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      await this.submitQuestionnaireResponse(response._id, questions);
+    });
+  }
+
+  renderQuestionField(question, index) {
+    const baseHTML = `
+      <div class="question-item" data-question-index="${index}">
+        <label class="question-label">
+          <span class="question-number">${index + 1}.</span>
+          ${question.question}
+          ${question.required ? '<span style="color: var(--danger);">*</span>' : ''}
+        </label>
+    `;
+
+    let inputHTML = '';
+
+    switch(question.type) {
+      case 'text':
+        inputHTML = `<input type="text" name="question_${index}" class="form-input" ${question.required ? 'required' : ''} placeholder="Tu respuesta...">`;
+        break;
+
+      case 'number':
+        inputHTML = `<input type="number" name="question_${index}" class="form-input" ${question.required ? 'required' : ''} placeholder="Número...">`;
+        break;
+
+      case 'multiple':
+        inputHTML = `
+          <select name="question_${index}" class="form-select" ${question.required ? 'required' : ''}>
+            <option value="">Selecciona una opción...</option>
+            ${(question.options || []).map(opt => `
+              <option value="${opt}">${opt}</option>
+            `).join('')}
+          </select>
+        `;
+        break;
+
+      case 'scale':
+        const min = question.scaleMin || 0;
+        const max = question.scaleMax || 10;
+        inputHTML = `
+          <div class="scale-input">
+            <input type="range" name="question_${index}" class="form-range"
+              min="${min}" max="${max}" value="${min}"
+              oninput="document.getElementById('scale_value_${index}').textContent = this.value"
+              ${question.required ? 'required' : ''}>
+            <div class="scale-labels">
+              <span>${min}</span>
+              <span id="scale_value_${index}">${min}</span>
+              <span>${max}</span>
+            </div>
+          </div>
+        `;
+        break;
+
+      case 'yesno':
+        inputHTML = `
+          <div class="radio-group">
+            <label class="radio-label">
+              <input type="radio" name="question_${index}" value="Sí" ${question.required ? 'required' : ''}>
+              <span>Sí</span>
+            </label>
+            <label class="radio-label">
+              <input type="radio" name="question_${index}" value="No" ${question.required ? 'required' : ''}>
+              <span>No</span>
+            </label>
+          </div>
+        `;
+        break;
+
+      case 'date':
+        inputHTML = `<input type="date" name="question_${index}" class="form-input" ${question.required ? 'required' : ''}>`;
+        break;
+
+      default:
+        inputHTML = `<textarea name="question_${index}" class="form-textarea" rows="3" ${question.required ? 'required' : ''} placeholder="Tu respuesta..."></textarea>`;
+    }
+
+    return baseHTML + inputHTML + '</div>';
+  }
+
+  updateQuestionnaireProgress(totalQuestions) {
+    const form = document.getElementById('questionnaireFullForm');
+    const questions = form.querySelectorAll('.question-item');
+    let answered = 0;
+
+    questions.forEach(questionDiv => {
+      const inputs = questionDiv.querySelectorAll('input, select, textarea');
+      let hasValue = false;
+
+      inputs.forEach(input => {
+        if (input.type === 'radio') {
+          const radioGroup = form.querySelectorAll(`input[name="${input.name}"]`);
+          hasValue = Array.from(radioGroup).some(r => r.checked);
+        } else {
+          hasValue = input.value && input.value.trim() !== '';
+        }
+      });
+
+      if (hasValue) answered++;
+    });
+
+    const percentage = (answered / totalQuestions) * 100;
+    document.getElementById('questionnaireProgress').style.width = `${percentage}%`;
+    document.getElementById('progressText').textContent = `${answered} de ${totalQuestions} respondidas`;
+  }
+
+  async submitQuestionnaireResponse(responseId, questions) {
+    const form = document.getElementById('questionnaireFullForm');
+    const responses = [];
+
+    questions.forEach((q, index) => {
+      const input = form.querySelector(`[name="question_${index}"]`);
+      let answer = '';
+
+      if (input.type === 'radio') {
+        const checked = form.querySelector(`[name="question_${index}"]:checked`);
+        answer = checked ? checked.value : '';
+      } else {
+        answer = input.value;
+      }
+
+      responses.push({
+        question: q.question,
+        answer: answer,
+        questionType: q.type
+      });
+    });
+
+    try {
+      await api.submitQuestionnaire(responseId, responses);
+
+      // Mostrar mensaje de éxito
+      this.showSuccessScreen();
+
+      // Después de 2 segundos, verificar si hay más cuestionarios pendientes
+      setTimeout(async () => {
+        const hasPending = await this.checkPendingQuestionnaires();
+        if (!hasPending) {
+          // No hay más pendientes, ir al dashboard
+          this.showScreen('dashboard');
+          this.startReminderChecker();
+        }
+      }, 2000);
+
+    } catch (error) {
+      this.showMessage('Error enviando cuestionario: ' + error.message, 'error');
+    }
+  }
+
+  showSuccessScreen() {
+    const container = document.getElementById('app');
+    container.innerHTML = `
+      <div class="questionnaire-alert-screen">
+        <div class="questionnaire-alert-card">
+          <div class="alert-icon" style="background: var(--success);">✅</div>
+          <h1 class="alert-title">¡Cuestionario Completado!</h1>
+          <p class="alert-description">
+            Gracias por completar el cuestionario. Tus respuestas han sido enviadas correctamente y ayudarán a tu equipo médico a realizar un mejor seguimiento de tu tratamiento.
+          </p>
+          <div style="text-align: center; margin-top: 1.5rem; color: var(--gray-600);">
+            <p>Redirigiendo al dashboard...</p>
+          </div>
+        </div>
+      </div>
+    `;
+  }
 }
+
 
 const app = new FarmaFollowApp();
 document.addEventListener('DOMContentLoaded', () => app.init());

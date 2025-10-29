@@ -40,6 +40,9 @@ app.use('/api/analytics', require('./routes/analytics'));
 // Rutas de cuestionarios - HABILITADO
 app.use('/api/questionnaires', require('./routes/questionnaires'));
 
+// Rutas de historial clínico
+app.use('/api/clinical-history', require('./routes/clinicalHistory'));
+
 // Ruta de prueba
 app.get('/api/health', (req, res) => {
   res.json({ 
