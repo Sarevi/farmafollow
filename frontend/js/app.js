@@ -4038,11 +4038,194 @@ class FarmaFollowApp {
     this.viewPatientDetail(patientId);
   }
 
+  // ===== ATAJOS DE TECLADO =====
+
+  initKeyboardShortcuts() {
+    document.addEventListener('keydown', (e) => {
+      // Skip if typing in input/textarea
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+        // Except for ESC and Enter
+        if (e.key !== 'Escape' && e.key !== 'Enter') {
+          return;
+        }
+      }
+
+      // ESC: Cerrar modales y paneles
+      if (e.key === 'Escape') {
+        // Close modals
+        const modal = document.querySelector('.modal.active');
+        if (modal) {
+          modal.remove();
+          return;
+        }
+
+        // Close notifications
+        const notifPanel = document.querySelector('.notifications-panel.active');
+        if (notifPanel) {
+          this.toggleNotifications();
+          return;
+        }
+
+        // Close search results
+        this.hideSearchResults();
+        return;
+      }
+
+      // Only process shortcuts with Ctrl/Cmd
+      if (!e.ctrlKey && !e.metaKey) return;
+
+      // Prevent browser defaults for our shortcuts
+      const shortcuts = ['p', 'm', 'c', 'q', 's', 'd', 'e', 'k'];
+      if (shortcuts.includes(e.key.toLowerCase())) {
+        e.preventDefault();
+      }
+
+      // Shortcuts solo para admin
+      if (this.user && this.user.role === 'admin') {
+        switch(e.key.toLowerCase()) {
+          case 'p': // Ctrl+P: Pacientes
+            this.goBack();
+            setTimeout(() => this.showAdminSection('patients'), 100);
+            break;
+
+          case 'm': // Ctrl+M: Medicamentos
+            this.goBack();
+            setTimeout(() => this.showAdminSection('medications'), 100);
+            break;
+
+          case 'c': // Ctrl+C: Consultas (evitar conflicto con copy, solo si no hay selección)
+            if (window.getSelection().toString().length === 0) {
+              this.goBack();
+              setTimeout(() => this.showAdminSection('consultations'), 100);
+            }
+            break;
+
+          case 'q': // Ctrl+Q: Cuestionarios
+            this.goBack();
+            setTimeout(() => this.showAdminSection('questionnaires'), 100);
+            break;
+
+          case 's': // Ctrl+S: Focus en búsqueda
+            const searchInput = document.getElementById('globalSearch');
+            if (searchInput) {
+              searchInput.focus();
+              searchInput.select();
+            }
+            break;
+
+          case 'd': // Ctrl+D: Toggle Dark Mode
+            this.toggleDarkMode();
+            break;
+
+          case 'e': // Ctrl+E: Exportar pacientes
+            this.exportToCSV('patients');
+            break;
+
+          case 'k': // Ctrl+K: Mostrar atajos (help)
+            this.showKeyboardShortcutsHelp();
+            break;
+        }
+      }
+
+      // Shortcuts para todos los usuarios
+      switch(e.key.toLowerCase()) {
+        case 'd':
+          if (!this.user || this.user.role !== 'admin') {
+            this.toggleDarkMode();
+          }
+          break;
+
+        case 'k':
+          if (!this.user || this.user.role !== 'admin') {
+            this.showKeyboardShortcutsHelp();
+          }
+          break;
+      }
+    });
+  }
+
+  showKeyboardShortcutsHelp() {
+    const modal = document.createElement('div');
+    modal.className = 'modal active';
+
+    const adminShortcuts = this.user && this.user.role === 'admin' ? `
+      <div class="shortcut-category">
+        <h3>⚡ Navegación</h3>
+        <div class="shortcut-item">
+          <kbd>Ctrl</kbd> + <kbd>P</kbd>
+          <span>Gestionar Pacientes</span>
+        </div>
+        <div class="shortcut-item">
+          <kbd>Ctrl</kbd> + <kbd>M</kbd>
+          <span>Gestionar Medicamentos</span>
+        </div>
+        <div class="shortcut-item">
+          <kbd>Ctrl</kbd> + <kbd>C</kbd>
+          <span>Ver Consultas</span>
+        </div>
+        <div class="shortcut-item">
+          <kbd>Ctrl</kbd> + <kbd>Q</kbd>
+          <span>Cuestionarios PROMS</span>
+        </div>
+      </div>
+
+      <div class="shortcut-category">
+        <h3>🔧 Acciones</h3>
+        <div class="shortcut-item">
+          <kbd>Ctrl</kbd> + <kbd>S</kbd>
+          <span>Focus en Búsqueda</span>
+        </div>
+        <div class="shortcut-item">
+          <kbd>Ctrl</kbd> + <kbd>E</kbd>
+          <span>Exportar Pacientes</span>
+        </div>
+      </div>
+    ` : '';
+
+    modal.innerHTML = `
+      <div class="modal-content" style="max-width: 600px;">
+        <div class="modal-header">
+          <h2>⌨️ Atajos de Teclado</h2>
+          <button class="close-btn" onclick="this.closest('.modal').remove()">×</button>
+        </div>
+
+        <div class="shortcuts-help">
+          ${adminShortcuts}
+
+          <div class="shortcut-category">
+            <h3>🎨 General</h3>
+            <div class="shortcut-item">
+              <kbd>Ctrl</kbd> + <kbd>D</kbd>
+              <span>Toggle Modo Oscuro</span>
+            </div>
+            <div class="shortcut-item">
+              <kbd>Ctrl</kbd> + <kbd>K</kbd>
+              <span>Mostrar Atajos</span>
+            </div>
+            <div class="shortcut-item">
+              <kbd>Esc</kbd>
+              <span>Cerrar Modales/Paneles</span>
+            </div>
+          </div>
+
+          <p style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--gray-200); color: var(--gray-600); font-size: 0.875rem; text-align: center;">
+            💡 En Mac, usa <kbd>⌘ Cmd</kbd> en lugar de <kbd>Ctrl</kbd>
+          </p>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+  }
+
   // ===== INICIALIZACIÓN DE MEJORAS =====
 
   initEnhancements() {
     // Cargar preferencia de dark mode
     this.loadDarkModePreference();
+
+    // Inicializar atajos de teclado
+    this.initKeyboardShortcuts();
 
     // Mostrar elementos del header si es admin
     if (this.user && this.user.role === 'admin') {
