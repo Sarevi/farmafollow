@@ -1035,6 +1035,16 @@ class FarmaFollowApp {
           </div>
         </div>
 
+        <!-- Floating Action Buttons -->
+        <div class="fab-container">
+          <button class="fab" onclick="app.showCalendarView()" title="📅 Ver Calendario">
+            📅
+          </button>
+          <button class="fab" onclick="app.showComparativeAnalysis()" title="📊 Análisis Comparativo">
+            📊
+          </button>
+        </div>
+
         <div id="adminSectionContainer" style="margin-top: 2rem;"></div>
       `;
 
@@ -4036,6 +4046,294 @@ class FarmaFollowApp {
     this.hideSearchResults();
     document.getElementById('globalSearch').value = '';
     this.viewPatientDetail(patientId);
+  }
+
+  // ===== CALENDARIO =====
+
+  async showCalendarView() {
+    const users = await api.getUsers();
+    const consultations = await api.getAllConsultations();
+
+    // Generate calendar events
+    const events = [];
+
+    // Add upcoming consultations
+    consultations.filter(c => c.status === 'pending').forEach(c => {
+      events.push({
+        date: new Date(c.createdAt),
+        title: 'Consulta Pendiente',
+        type: 'consultation',
+        description: `Consulta de paciente (${c.createdAt ? new Date(c.createdAt).toLocaleDateString('es-ES') : 'sin fecha'})`,
+        priority: 'high'
+      });
+    });
+
+    // Add follow-up reminders (simulated - every 30 days per patient)
+    users.forEach(user => {
+      const followUpDate = new Date();
+      followUpDate.setDate(followUpDate.getDate() + 30);
+      events.push({
+        date: followUpDate,
+        title: `Seguimiento: ${user.name}`,
+        type: 'followup',
+        description: `Revisión periódica de adherencia y tratamiento`,
+        priority: 'normal'
+      });
+    });
+
+    // Low adherence check reminders
+    users.filter(u => (u.adherenceRate || 0) < 60).forEach(user => {
+      const checkDate = new Date();
+      checkDate.setDate(checkDate.getDate() + 7);
+      events.push({
+        date: checkDate,
+        title: `Revisar: ${user.name}`,
+        type: 'alert',
+        description: `Paciente con baja adherencia (${user.adherenceRate}%)`,
+        priority: 'high'
+      });
+    });
+
+    // Sort events by date
+    events.sort((a, b) => a.date - b.date);
+
+    // Show calendar modal
+    const modal = document.createElement('div');
+    modal.className = 'modal active';
+    modal.innerHTML = `
+      <div class="modal-content" style="max-width: 900px; max-height: 90vh; overflow-y: auto;">
+        <div class="modal-header">
+          <h2>📅 Calendario de Seguimientos</h2>
+          <button class="close-btn" onclick="this.closest('.modal').remove()">×</button>
+        </div>
+
+        <div class="calendar-view">
+          <div class="calendar-filters" style="margin-bottom: 1.5rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
+            <button class="btn btn-sm btn-primary" onclick="this.classList.toggle('active'); app.filterCalendarEvents('all')">
+              Todos
+            </button>
+            <button class="btn btn-sm btn-warning" onclick="this.classList.toggle('active'); app.filterCalendarEvents('consultation')">
+              💬 Consultas
+            </button>
+            <button class="btn btn-sm btn-success" onclick="this.classList.toggle('active'); app.filterCalendarEvents('followup')">
+              🔄 Seguimientos
+            </button>
+            <button class="btn btn-sm btn-danger" onclick="this.classList.toggle('active'); app.filterCalendarEvents('alert')">
+              ⚠️ Alertas
+            </button>
+          </div>
+
+          <div class="calendar-timeline">
+            ${this.renderCalendarTimeline(events)}
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+  }
+
+  renderCalendarTimeline(events) {
+    const today = new Date();
+    const grouped = {};
+
+    // Group events by month
+    events.forEach(event => {
+      const monthKey = event.date.toLocaleDateString('es-ES', { year: 'numeric', month: 'long' });
+      if (!grouped[monthKey]) grouped[monthKey] = [];
+      grouped[monthKey].push(event);
+    });
+
+    return Object.entries(grouped).map(([month, monthEvents]) => `
+      <div class="calendar-month-section">
+        <h3 class="calendar-month-title">${month}</h3>
+        <div class="calendar-events-list">
+          ${monthEvents.map(event => {
+            const isPast = event.date < today;
+            const isToday = event.date.toDateString() === today.toDateString();
+            const priorityClass = event.priority === 'high' ? 'event-high-priority' : '';
+            const typeClass = `event-type-${event.type}`;
+
+            return `
+              <div class="calendar-event-item ${priorityClass} ${typeClass} ${isPast ? 'event-past' : ''} ${isToday ? 'event-today' : ''}" data-event-type="${event.type}">
+                <div class="event-date">
+                  <div class="event-day">${event.date.getDate()}</div>
+                  <div class="event-weekday">${event.date.toLocaleDateString('es-ES', { weekday: 'short' })}</div>
+                </div>
+                <div class="event-details">
+                  <div class="event-title">${event.title}</div>
+                  <div class="event-description">${event.description}</div>
+                </div>
+                <div class="event-badge ${event.priority === 'high' ? 'badge-danger' : 'badge-info'}">
+                  ${event.priority === 'high' ? '⚠️' : '📅'}
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+    `).join('');
+  }
+
+  filterCalendarEvents(type) {
+    const events = document.querySelectorAll('.calendar-event-item');
+    events.forEach(event => {
+      if (type === 'all') {
+        event.style.display = 'flex';
+      } else {
+        event.style.display = event.dataset.eventType === type ? 'flex' : 'none';
+      }
+    });
+  }
+
+  // ===== ANÁLISIS COMPARATIVO =====
+
+  async showComparativeAnalysis() {
+    const [users, medications, consultations, questionnaires] = await Promise.all([
+      api.getUsers(),
+      api.getMedications(),
+      api.getAllConsultations(),
+      api.getAllQuestionnaires().catch(() => [])
+    ]);
+
+    // Calculate comparative metrics
+    const adherenceByMedication = {};
+    medications.forEach(med => {
+      const medPatients = users.filter(u =>
+        u.medications && u.medications.some(m => m._id === med._id || m.name === med.name)
+      );
+      if (medPatients.length > 0) {
+        const avgAdherence = medPatients.reduce((sum, p) => sum + (p.adherenceRate || 0), 0) / medPatients.length;
+        adherenceByMedication[med.name] = {
+          avg: Math.round(avgAdherence),
+          count: medPatients.length
+        };
+      }
+    });
+
+    // Consultation response times
+    const consultationStats = {
+      pending: consultations.filter(c => c.status === 'pending').length,
+      resolved: consultations.filter(c => c.status === 'resolved').length,
+      avgResponseTime: '< 24h' // Simulated
+    };
+
+    // Disease distribution
+    const diseaseStats = {};
+    users.forEach(user => {
+      if (user.diseases) {
+        user.diseases.forEach(disease => {
+          diseaseStats[disease] = (diseaseStats[disease] || 0) + 1;
+        });
+      }
+    });
+
+    const modal = document.createElement('div');
+    modal.className = 'modal active';
+    modal.innerHTML = `
+      <div class="modal-content" style="max-width: 1000px; max-height: 90vh; overflow-y: auto;">
+        <div class="modal-header">
+          <h2>📊 Análisis Comparativo</h2>
+          <button class="close-btn" onclick="this.closest('.modal').remove()">×</button>
+        </div>
+
+        <div class="comparative-analysis">
+          <!-- Adherence by Medication -->
+          <div class="analysis-section">
+            <h3>💊 Adherencia por Medicamento</h3>
+            <div class="comparison-grid">
+              ${Object.entries(adherenceByMedication)
+                .sort((a, b) => b[1].avg - a[1].avg)
+                .map(([med, data]) => `
+                  <div class="comparison-card">
+                    <div class="comparison-card-header">
+                      <strong>${med}</strong>
+                      <span class="badge ${data.avg >= 80 ? 'badge-success' : data.avg >= 60 ? 'badge-warning' : 'badge-danger'}">
+                        ${data.avg}%
+                      </span>
+                    </div>
+                    <div class="comparison-bar">
+                      <div class="comparison-bar-fill" style="width: ${data.avg}%; background: ${data.avg >= 80 ? 'var(--success)' : data.avg >= 60 ? 'var(--warning)' : 'var(--danger)'}"></div>
+                    </div>
+                    <div class="comparison-meta">${data.count} pacientes</div>
+                  </div>
+                `).join('')}
+            </div>
+          </div>
+
+          <!-- Consultation Stats -->
+          <div class="analysis-section">
+            <h3>💬 Estadísticas de Consultas</h3>
+            <div class="stats-grid">
+              <div class="stat-item-analysis">
+                <div class="stat-value-large">${consultationStats.pending}</div>
+                <div class="stat-label">Pendientes</div>
+              </div>
+              <div class="stat-item-analysis">
+                <div class="stat-value-large">${consultationStats.resolved}</div>
+                <div class="stat-label">Resueltas</div>
+              </div>
+              <div class="stat-item-analysis">
+                <div class="stat-value-large">${consultationStats.avgResponseTime}</div>
+                <div class="stat-label">Tiempo Medio Respuesta</div>
+              </div>
+              <div class="stat-item-analysis">
+                <div class="stat-value-large">${Math.round((consultationStats.resolved / (consultationStats.resolved + consultationStats.pending)) * 100)}%</div>
+                <div class="stat-label">Tasa de Resolución</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Disease Distribution -->
+          <div class="analysis-section">
+            <h3>🎯 Distribución de Pacientes por Enfermedad</h3>
+            <div class="disease-comparison">
+              ${Object.entries(diseaseStats)
+                .sort((a, b) => b[1] - a[1])
+                .map(([disease, count]) => {
+                  const percentage = Math.round((count / users.length) * 100);
+                  return `
+                    <div class="disease-stat-row">
+                      <div class="disease-stat-label">${disease}</div>
+                      <div class="disease-stat-bar-container">
+                        <div class="disease-stat-bar" style="width: ${percentage}%"></div>
+                        <span class="disease-stat-value">${count} (${percentage}%)</span>
+                      </div>
+                    </div>
+                  `;
+                }).join('')}
+            </div>
+          </div>
+
+          <!-- Quick Insights -->
+          <div class="analysis-section">
+            <h3>💡 Insights Rápidos</h3>
+            <div class="insights-grid">
+              <div class="insight-card insight-success">
+                <div class="insight-icon">✅</div>
+                <div class="insight-text">
+                  <strong>${users.filter(u => (u.adherenceRate || 0) >= 80).length} pacientes</strong> con adherencia excelente (≥80%)
+                </div>
+              </div>
+              <div class="insight-card insight-warning">
+                <div class="insight-icon">⚠️</div>
+                <div class="insight-text">
+                  <strong>${users.filter(u => (u.adherenceRate || 0) < 60).length} pacientes</strong> requieren intervención (adherencia <60%)
+                </div>
+              </div>
+              <div class="insight-card insight-info">
+                <div class="insight-icon">📋</div>
+                <div class="insight-text">
+                  <strong>${questionnaires.filter(q => q.status === 'completed').length} cuestionarios</strong> completados del total de ${questionnaires.length}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
   }
 
   // ===== ATAJOS DE TECLADO =====
