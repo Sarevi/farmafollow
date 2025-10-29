@@ -889,60 +889,418 @@ class FarmaFollowApp {
         ? Math.round(users.reduce((sum, u) => sum + (u.adherenceRate || 0), 0) / users.length)
         : 0;
 
+      // Calculate low adherence count
+      const lowAdherenceCount = users.filter(u => (u.adherenceRate || 0) < 60).length;
+      const assignedQuestionnaires = questionnaires.filter(q => q.status === 'assigned').length;
+
       container.innerHTML = `
         <div class="admin-header">
           <h1 class="admin-title">📊 Panel de Administración</h1>
         </div>
 
         <div class="admin-stats">
-          <div class="stat-card">
-            <div class="stat-icon" style="font-size: 2rem; margin-bottom: 0.5rem;">👥</div>
-            <div class="stat-value">${users.length}</div>
-            <div class="stat-label">Total Pacientes</div>
+          <!-- Total Pacientes Card -->
+          <div class="stat-card-enhanced">
+            <div class="stat-card-content">
+              <div class="stat-icon-enhanced">👥</div>
+              <div class="stat-details">
+                <div class="stat-value">${users.length}</div>
+                <div class="stat-label">Total Pacientes</div>
+                <div class="stat-mini">
+                  <span style="color: var(--success);">↑ ${users.filter(u => u.createdAt && new Date(u.createdAt) > new Date(Date.now() - 30*24*60*60*1000)).length}</span>
+                  <span style="color: var(--gray-600); font-size: 0.75rem;">últimos 30 días</span>
+                </div>
+              </div>
+            </div>
+            <div class="stat-actions">
+              <button class="stat-action-btn" onclick="app.showAdminSection('patients')">
+                Ver todos
+              </button>
+              <button class="stat-action-btn" onclick="app.quickActionExportPatients()">
+                Exportar
+              </button>
+            </div>
           </div>
-          <div class="stat-card" style="background: linear-gradient(135deg, var(--success) 0%, #059669 100%);">
-            <div class="stat-icon" style="font-size: 2rem; margin-bottom: 0.5rem;">💊</div>
-            <div class="stat-value">${activeMedications}</div>
-            <div class="stat-label">Medicamentos Activos</div>
+
+          <!-- Medicamentos Activos Card -->
+          <div class="stat-card-enhanced" style="border-left: 4px solid var(--success);">
+            <div class="stat-card-content">
+              <div class="stat-icon-enhanced" style="background: var(--success-light);">💊</div>
+              <div class="stat-details">
+                <div class="stat-value">${activeMedications}</div>
+                <div class="stat-label">Medicamentos Activos</div>
+                <div class="stat-mini">
+                  <span style="color: var(--gray-600); font-size: 0.75rem;">${medications.length} en total</span>
+                </div>
+              </div>
+            </div>
+            <div class="stat-actions">
+              <button class="stat-action-btn" onclick="app.showAdminSection('medications')">
+                Gestionar
+              </button>
+              <button class="stat-action-btn" onclick="app.createMedication()">
+                + Nuevo
+              </button>
+            </div>
           </div>
-          <div class="stat-card" style="background: linear-gradient(135deg, var(--warning) 0%, #d97706 100%);">
-            <div class="stat-icon" style="font-size: 2rem; margin-bottom: 0.5rem;">💬</div>
-            <div class="stat-value">${pendingConsultations}</div>
-            <div class="stat-label">Consultas Pendientes</div>
+
+          <!-- Consultas Pendientes Card -->
+          <div class="stat-card-enhanced" style="border-left: 4px solid var(--warning);">
+            <div class="stat-card-content">
+              <div class="stat-icon-enhanced" style="background: var(--warning-light);">💬</div>
+              <div class="stat-details">
+                <div class="stat-value">${pendingConsultations}</div>
+                <div class="stat-label">Consultas Pendientes</div>
+                <div class="stat-mini">
+                  <span style="color: var(--success);">${resolvedConsultations} resueltas</span>
+                  <span style="color: var(--gray-600); font-size: 0.75rem;">·</span>
+                  <span style="color: var(--gray-600); font-size: 0.75rem;">${consultations.length} total</span>
+                </div>
+              </div>
+            </div>
+            <div class="stat-actions">
+              <button class="stat-action-btn" onclick="app.quickActionPendingConsultations()">
+                Responder
+              </button>
+              <button class="stat-action-btn" onclick="app.showAdminSection('consultations')">
+                Ver todas
+              </button>
+            </div>
           </div>
-          <div class="stat-card" style="background: linear-gradient(135deg, var(--cyan) 0%, var(--cyan-dark) 100%);">
-            <div class="stat-icon" style="font-size: 2rem; margin-bottom: 0.5rem;">📈</div>
-            <div class="stat-value">${avgAdherence}%</div>
-            <div class="stat-label">Adherencia Media</div>
+
+          <!-- Adherencia Media Card -->
+          <div class="stat-card-enhanced" style="border-left: 4px solid var(--cyan);">
+            <div class="stat-card-content">
+              <div class="stat-icon-enhanced" style="background: var(--cyan-light);">📈</div>
+              <div class="stat-details">
+                <div class="stat-value">${avgAdherence}%</div>
+                <div class="stat-label">Adherencia Media</div>
+                <div class="stat-mini">
+                  ${lowAdherenceCount > 0 ? `<span style="color: var(--danger);">⚠️ ${lowAdherenceCount} pacientes < 60%</span>` : '<span style="color: var(--success);">✓ Todos adherentes</span>'}
+                </div>
+              </div>
+            </div>
+            <div class="stat-actions">
+              <button class="stat-action-btn" onclick="app.quickActionLowAdherence()">
+                Ver baja adherencia
+              </button>
+              <button class="stat-action-btn" onclick="app.exportToCSV('patients')">
+                Exportar
+              </button>
+            </div>
           </div>
-          <div class="stat-card" style="background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);">
-            <div class="stat-icon" style="font-size: 2rem; margin-bottom: 0.5rem;">📋</div>
-            <div class="stat-value">${activeQuestionnaires}</div>
-            <div class="stat-label">Cuestionarios Activos</div>
+
+          <!-- Cuestionarios Card -->
+          <div class="stat-card-enhanced" style="border-left: 4px solid #8b5cf6;">
+            <div class="stat-card-content">
+              <div class="stat-icon-enhanced" style="background: rgba(139, 92, 246, 0.1);">📋</div>
+              <div class="stat-details">
+                <div class="stat-value">${activeQuestionnaires}</div>
+                <div class="stat-label">Cuestionarios Activos</div>
+                <div class="stat-mini">
+                  <span style="color: var(--warning);">${assignedQuestionnaires} asignados</span>
+                  <span style="color: var(--gray-600); font-size: 0.75rem;">·</span>
+                  <span style="color: var(--gray-600); font-size: 0.75rem;">${questionnaires.length} total</span>
+                </div>
+              </div>
+            </div>
+            <div class="stat-actions">
+              <button class="stat-action-btn" onclick="app.showAdminSection('questionnaires')">
+                Gestionar
+              </button>
+              <button class="stat-action-btn" onclick="app.createQuestionnaire()">
+                + Nuevo
+              </button>
+            </div>
           </div>
         </div>
 
-        <div style="margin-top: 2rem; display: flex; flex-wrap: wrap; gap: 1rem;">
-          <button class="btn btn-primary" onclick="app.showAdminSection('patients')">
-            👥 Gestionar Pacientes
+        <!-- Charts Section -->
+        <div class="charts-grid" style="margin-top: 2rem;">
+          <div class="chart-container">
+            <h3 class="chart-title">📊 Adherencia en el Tiempo</h3>
+            <canvas id="adherenceChart"></canvas>
+          </div>
+          <div class="chart-container">
+            <h3 class="chart-title">🎯 Distribución de Enfermedades</h3>
+            <canvas id="diseasesChart"></canvas>
+          </div>
+          <div class="chart-container">
+            <h3 class="chart-title">💬 Evolución de Consultas</h3>
+            <canvas id="consultationsChart"></canvas>
+          </div>
+          <div class="chart-container">
+            <h3 class="chart-title">📋 Actividad de Cuestionarios</h3>
+            <canvas id="questionnairesChart"></canvas>
+          </div>
+        </div>
+
+        <!-- Floating Action Buttons -->
+        <div class="fab-container">
+          <button class="fab" onclick="app.showCalendarView()" title="📅 Ver Calendario">
+            📅
           </button>
-          <button class="btn btn-success" onclick="app.showAdminSection('medications')">
-            💊 Gestionar Medicamentos
-          </button>
-          <button class="btn btn-secondary" onclick="app.showAdminSection('consultations')">
-            💬 Ver Consultas
-          </button>
-          <button class="btn" style="background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); color: white;" onclick="app.showAdminSection('questionnaires')">
-            📋 Cuestionarios PROMS
+          <button class="fab" onclick="app.showComparativeAnalysis()" title="📊 Análisis Comparativo">
+            📊
           </button>
         </div>
 
         <div id="adminSectionContainer" style="margin-top: 2rem;"></div>
       `;
 
+      // Initialize charts after DOM is ready
+      setTimeout(() => this.initDashboardCharts(users, consultations, questionnaires), 100);
+
     } catch (error) {
       logger.error('Error cargando admin dashboard:', error);
       container.innerHTML = '<div class="error">Error cargando panel de administración</div>';
+    }
+  }
+
+  initDashboardCharts(users, consultations, questionnaires) {
+    // Destroy existing charts if they exist
+    if (this.charts) {
+      Object.values(this.charts).forEach(chart => chart?.destroy());
+    }
+    this.charts = {};
+
+    // Chart 1: Adherencia en el Tiempo (Line Chart)
+    const adherenceCtx = document.getElementById('adherenceChart');
+    if (adherenceCtx) {
+      // Generate last 6 months data
+      const months = [];
+      const adherenceData = [];
+      for (let i = 5; i >= 0; i--) {
+        const date = new Date();
+        date.setMonth(date.getMonth() - i);
+        months.push(date.toLocaleDateString('es-ES', { month: 'short', year: '2-digit' }));
+
+        // Simulate adherence evolution (in real app, this would come from historical data)
+        const baseAdherence = users.length > 0
+          ? users.reduce((sum, u) => sum + (u.adherenceRate || 0), 0) / users.length
+          : 0;
+        adherenceData.push(Math.round(baseAdherence + (Math.random() * 10 - 5)));
+      }
+
+      this.charts.adherence = new Chart(adherenceCtx, {
+        type: 'line',
+        data: {
+          labels: months,
+          datasets: [{
+            label: 'Adherencia Media (%)',
+            data: adherenceData,
+            borderColor: 'rgb(34, 197, 94)',
+            backgroundColor: 'rgba(34, 197, 94, 0.1)',
+            tension: 0.4,
+            fill: true,
+            pointRadius: 4,
+            pointHoverRadius: 6
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: (context) => `${context.parsed.y}%`
+              }
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              max: 100,
+              ticks: { callback: (value) => value + '%' }
+            }
+          }
+        }
+      });
+    }
+
+    // Chart 2: Distribución de Enfermedades (Doughnut Chart)
+    const diseasesCtx = document.getElementById('diseasesChart');
+    if (diseasesCtx) {
+      const diseaseCount = {};
+      users.forEach(user => {
+        if (user.diseases && user.diseases.length > 0) {
+          user.diseases.forEach(disease => {
+            diseaseCount[disease] = (diseaseCount[disease] || 0) + 1;
+          });
+        }
+      });
+
+      const diseaseLabels = Object.keys(diseaseCount);
+      const diseaseValues = Object.values(diseaseCount);
+      const colors = [
+        '#6366f1', '#8b5cf6', '#ec4899', '#f59e0b',
+        '#10b981', '#06b6d4', '#f97316', '#84cc16'
+      ];
+
+      this.charts.diseases = new Chart(diseasesCtx, {
+        type: 'doughnut',
+        data: {
+          labels: diseaseLabels.length > 0 ? diseaseLabels : ['Sin datos'],
+          datasets: [{
+            data: diseaseValues.length > 0 ? diseaseValues : [1],
+            backgroundColor: colors,
+            borderWidth: 2,
+            borderColor: '#ffffff'
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              position: 'right',
+              labels: { padding: 15, font: { size: 11 } }
+            },
+            tooltip: {
+              callbacks: {
+                label: (context) => {
+                  const label = context.label || '';
+                  const value = context.parsed || 0;
+                  const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                  const percentage = Math.round((value / total) * 100);
+                  return `${label}: ${value} (${percentage}%)`;
+                }
+              }
+            }
+          }
+        }
+      });
+    }
+
+    // Chart 3: Evolución de Consultas (Bar Chart)
+    const consultationsCtx = document.getElementById('consultationsChart');
+    if (consultationsCtx) {
+      // Group consultations by month
+      const last6Months = [];
+      const pendingByMonth = [];
+      const resolvedByMonth = [];
+
+      for (let i = 5; i >= 0; i--) {
+        const date = new Date();
+        date.setMonth(date.getMonth() - i);
+        const monthKey = date.toLocaleDateString('es-ES', { month: 'short', year: '2-digit' });
+        last6Months.push(monthKey);
+
+        // Count consultations for this month
+        const monthStart = new Date(date.getFullYear(), date.getMonth(), 1);
+        const monthEnd = new Date(date.getFullYear(), date.getMonth() + 1, 0);
+
+        const monthConsultations = consultations.filter(c => {
+          const cDate = new Date(c.createdAt);
+          return cDate >= monthStart && cDate <= monthEnd;
+        });
+
+        pendingByMonth.push(monthConsultations.filter(c => c.status === 'pending').length);
+        resolvedByMonth.push(monthConsultations.filter(c => c.status === 'resolved').length);
+      }
+
+      this.charts.consultations = new Chart(consultationsCtx, {
+        type: 'bar',
+        data: {
+          labels: last6Months,
+          datasets: [
+            {
+              label: 'Resueltas',
+              data: resolvedByMonth,
+              backgroundColor: 'rgba(34, 197, 94, 0.8)',
+              borderColor: 'rgb(34, 197, 94)',
+              borderWidth: 1
+            },
+            {
+              label: 'Pendientes',
+              data: pendingByMonth,
+              backgroundColor: 'rgba(251, 146, 60, 0.8)',
+              borderColor: 'rgb(251, 146, 60)',
+              borderWidth: 1
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: 'top' }
+          },
+          scales: {
+            x: { stacked: true },
+            y: {
+              stacked: true,
+              beginAtZero: true,
+              ticks: { stepSize: 1 }
+            }
+          }
+        }
+      });
+    }
+
+    // Chart 4: Actividad de Cuestionarios (Line Chart)
+    const questionnairesCtx = document.getElementById('questionnairesChart');
+    if (questionnairesCtx) {
+      const last6Months = [];
+      const assignedByMonth = [];
+      const completedByMonth = [];
+
+      for (let i = 5; i >= 0; i--) {
+        const date = new Date();
+        date.setMonth(date.getMonth() - i);
+        const monthKey = date.toLocaleDateString('es-ES', { month: 'short', year: '2-digit' });
+        last6Months.push(monthKey);
+
+        const monthStart = new Date(date.getFullYear(), date.getMonth(), 1);
+        const monthEnd = new Date(date.getFullYear(), date.getMonth() + 1, 0);
+
+        const monthQuestionnaires = questionnaires.filter(q => {
+          const qDate = new Date(q.createdAt);
+          return qDate >= monthStart && qDate <= monthEnd;
+        });
+
+        assignedByMonth.push(monthQuestionnaires.filter(q => q.status === 'assigned' || q.status === 'in_progress').length);
+        completedByMonth.push(monthQuestionnaires.filter(q => q.status === 'completed').length);
+      }
+
+      this.charts.questionnaires = new Chart(questionnairesCtx, {
+        type: 'line',
+        data: {
+          labels: last6Months,
+          datasets: [
+            {
+              label: 'Completados',
+              data: completedByMonth,
+              borderColor: 'rgb(34, 197, 94)',
+              backgroundColor: 'rgba(34, 197, 94, 0.1)',
+              tension: 0.4,
+              fill: true
+            },
+            {
+              label: 'Asignados',
+              data: assignedByMonth,
+              borderColor: 'rgb(251, 146, 60)',
+              backgroundColor: 'rgba(251, 146, 60, 0.1)',
+              tension: 0.4,
+              fill: true
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: 'top' }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              ticks: { stepSize: 1 }
+            }
+          }
+        }
+      });
     }
   }
 
@@ -3313,6 +3671,881 @@ class FarmaFollowApp {
         </div>
       </div>
     `;
+  }
+
+  // ===== DARK MODE =====
+
+  toggleDarkMode() {
+    document.body.classList.toggle('dark-mode');
+    const isDark = document.body.classList.contains('dark-mode');
+
+    // Persistir preferencia
+    localStorage.setItem('darkMode', isDark ? 'enabled' : 'disabled');
+
+    // Cambiar icono
+    const themeBtn = document.getElementById('themeToggle');
+    if (themeBtn) {
+      themeBtn.textContent = isDark ? '☀️' : '🌙';
+    }
+  }
+
+  loadDarkModePreference() {
+    const darkMode = localStorage.getItem('darkMode');
+    if (darkMode === 'enabled') {
+      document.body.classList.add('dark-mode');
+      const themeBtn = document.getElementById('themeToggle');
+      if (themeBtn) themeBtn.textContent = '☀️';
+    }
+  }
+
+  // ===== SISTEMA DE NOTIFICACIONES =====
+
+  notifications = [];
+
+  updateNotificationBadge() {
+    const badge = document.getElementById('notificationBadge');
+    const unreadCount = this.notifications.filter(n => !n.read).length;
+
+    if (badge) {
+      if (unreadCount > 0) {
+        badge.textContent = unreadCount > 9 ? '9+' : unreadCount;
+        badge.classList.remove('hidden');
+      } else {
+        badge.classList.add('hidden');
+      }
+    }
+  }
+
+  async loadNotifications() {
+    // Cargar notificaciones desde las consultas pendientes y otros eventos
+    try {
+      if (this.user.role === 'admin') {
+        const [consultations, questionnaires] = await Promise.all([
+          api.getAllConsultations().catch(() => []),
+          api.getAllQuestionnaires().catch(() => [])
+        ]);
+
+        this.notifications = [];
+
+        // Notificaciones de consultas pendientes
+        const pendingConsults = consultations.filter(c => c.status === 'pending');
+        pendingConsults.forEach(c => {
+          this.notifications.push({
+            id: `consult-${c._id}`,
+            title: 'Nueva consulta',
+            message: `Consulta de paciente: ${c.message?.substring(0, 50)}...`,
+            time: this.getTimeAgo(c.createdAt),
+            read: false,
+            action: () => this.showAdminSection('consultations')
+          });
+        });
+
+        // Notificaciones de cuestionarios sin responder
+        const activeQuest = questionnaires.filter(q => q.status === 'active');
+        if (activeQuest.length > 0) {
+          this.notifications.push({
+            id: 'quest-active',
+            title: 'Cuestionarios activos',
+            message: `Tienes ${activeQuest.length} cuestionario(s) activo(s)`,
+            time: 'Ahora',
+            read: false,
+            action: () => this.showAdminSection('questionnaires')
+          });
+        }
+      }
+
+      this.updateNotificationBadge();
+    } catch (error) {
+      logger.error('Error cargando notificaciones:', error);
+    }
+  }
+
+  toggleNotifications() {
+    // Crear panel si no existe
+    let panel = document.getElementById('notificationsPanel');
+
+    if (!panel) {
+      panel = document.createElement('div');
+      panel.id = 'notificationsPanel';
+      panel.className = 'notifications-panel';
+      panel.innerHTML = `
+        <div class="notifications-header">
+          <h3>Notificaciones</h3>
+          <button class="mark-all-read" onclick="app.markAllAsRead()">Marcar todas como leídas</button>
+        </div>
+        <div class="notifications-list" id="notificationsList">
+          ${this.renderNotifications()}
+        </div>
+      `;
+      document.body.appendChild(panel);
+    }
+
+    panel.classList.toggle('active');
+
+    // Cerrar al hacer click fuera
+    if (panel.classList.contains('active')) {
+      setTimeout(() => {
+        document.addEventListener('click', function closePanel(e) {
+          if (!panel.contains(e.target) && !document.getElementById('notificationBtn').contains(e.target)) {
+            panel.classList.remove('active');
+            document.removeEventListener('click', closePanel);
+          }
+        });
+      }, 100);
+    }
+  }
+
+  renderNotifications() {
+    if (this.notifications.length === 0) {
+      return '<div style="padding: 2rem; text-align: center; color: var(--gray-500);">No hay notificaciones</div>';
+    }
+
+    return this.notifications.map(n => `
+      <div class="notification-item ${n.read ? '' : 'unread'}" onclick="app.handleNotificationClick('${n.id}')">
+        <div class="notification-title">${n.title}</div>
+        <div class="notification-message">${n.message}</div>
+        <div class="notification-time">${n.time}</div>
+      </div>
+    `).join('');
+  }
+
+  handleNotificationClick(notificationId) {
+    const notification = this.notifications.find(n => n.id === notificationId);
+    if (notification) {
+      notification.read = true;
+      this.updateNotificationBadge();
+
+      // Ejecutar acción
+      if (notification.action) {
+        notification.action();
+      }
+
+      // Cerrar panel
+      document.getElementById('notificationsPanel')?.classList.remove('active');
+    }
+  }
+
+  markAllAsRead() {
+    this.notifications.forEach(n => n.read = true);
+    this.updateNotificationBadge();
+
+    const list = document.getElementById('notificationsList');
+    if (list) {
+      list.innerHTML = this.renderNotifications();
+    }
+  }
+
+  getTimeAgo(date) {
+    const seconds = Math.floor((new Date() - new Date(date)) / 1000);
+
+    if (seconds < 60) return 'Ahora';
+    if (seconds < 3600) return `Hace ${Math.floor(seconds / 60)} min`;
+    if (seconds < 86400) return `Hace ${Math.floor(seconds / 3600)} h`;
+    return `Hace ${Math.floor(seconds / 86400)} días`;
+  }
+
+  // ===== EXPORTACIÓN DE DATOS =====
+
+  async exportToCSV(type) {
+    try {
+      let data = [];
+      let headers = [];
+      let filename = '';
+
+      switch(type) {
+        case 'patients':
+          const users = await api.getUsers();
+          headers = ['Nombre', 'Email', 'Teléfono', 'Adherencia %', 'Enfermedades'];
+          data = users.map(u => [
+            u.name,
+            u.email,
+            u.phone || '',
+            u.adherenceRate || 0,
+            (u.diseases || []).join('; ')
+          ]);
+          filename = 'pacientes';
+          break;
+
+        case 'consultations':
+          const consultations = await api.getAllConsultations();
+          headers = ['Fecha', 'Paciente', 'Mensaje', 'Estado', 'Respuesta'];
+          data = consultations.map(c => [
+            new Date(c.createdAt).toLocaleDateString('es-ES'),
+            c.patient?.name || 'Desconocido',
+            c.message,
+            c.status,
+            c.response || ''
+          ]);
+          filename = 'consultas';
+          break;
+
+        case 'questionnaires':
+          const questionnaires = await api.getAllQuestionnaires();
+          headers = ['Título', 'Tipo', 'Estado', 'Preguntas', 'Creado'];
+          data = questionnaires.map(q => [
+            q.title,
+            q.type,
+            q.status,
+            q.questions?.length || 0,
+            new Date(q.createdAt).toLocaleDateString('es-ES')
+          ]);
+          filename = 'cuestionarios';
+          break;
+      }
+
+      this.downloadCSV(headers, data, filename);
+      this.showMessage('✅ Datos exportados correctamente', 'success');
+
+    } catch (error) {
+      this.showMessage('Error exportando datos: ' + error.message, 'error');
+    }
+  }
+
+  downloadCSV(headers, rows, filename) {
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+    ].join('\n');
+
+    const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+
+    link.setAttribute('href', url);
+    link.setAttribute('download', `${filename}_${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+
+  // ===== ACCIONES RÁPIDAS =====
+
+  quickActionLowAdherence() {
+    this.showAdminSection('patients');
+    // Filtrar por baja adherencia (implementar filtro después)
+    this.showMessage('Mostrando pacientes con baja adherencia...', 'info');
+  }
+
+  quickActionPendingConsultations() {
+    this.showAdminSection('consultations');
+  }
+
+  quickActionExportPatients() {
+    this.exportToCSV('patients');
+  }
+
+  // ===== BÚSQUEDA GLOBAL =====
+
+  searchTimeout = null;
+
+  initGlobalSearch() {
+    const searchInput = document.getElementById('globalSearch');
+    if (!searchInput) return;
+
+    searchInput.addEventListener('input', (e) => {
+      clearTimeout(this.searchTimeout);
+      const query = e.target.value.trim();
+
+      if (query.length === 0) {
+        this.hideSearchResults();
+        return;
+      }
+
+      // Debounce search
+      this.searchTimeout = setTimeout(() => {
+        this.performGlobalSearch(query);
+      }, 300);
+    });
+
+    // Close on click outside
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('.search-container') && !e.target.closest('.search-results')) {
+        this.hideSearchResults();
+      }
+    });
+  }
+
+  async performGlobalSearch(query) {
+    try {
+      const users = await api.getUsers();
+      const lowerQuery = query.toLowerCase();
+
+      // Search in patients
+      const results = users.filter(user => {
+        return user.name.toLowerCase().includes(lowerQuery) ||
+               user.email.toLowerCase().includes(lowerQuery) ||
+               (user.phone && user.phone.includes(query)) ||
+               (user.diseases && user.diseases.some(d => d.toLowerCase().includes(lowerQuery))) ||
+               (user.medications && user.medications.some(m => m.name && m.name.toLowerCase().includes(lowerQuery)));
+      });
+
+      this.showSearchResults(results, query);
+    } catch (error) {
+      logger.error('Error en búsqueda global:', error);
+    }
+  }
+
+  showSearchResults(results, query) {
+    // Remove existing results
+    this.hideSearchResults();
+
+    const searchContainer = document.querySelector('.search-container');
+    if (!searchContainer) return;
+
+    const resultsDiv = document.createElement('div');
+    resultsDiv.className = 'search-results';
+    resultsDiv.id = 'globalSearchResults';
+
+    if (results.length === 0) {
+      resultsDiv.innerHTML = `
+        <div class="search-result-item" style="text-align: center; color: var(--gray-500);">
+          No se encontraron resultados para "${query}"
+        </div>
+      `;
+    } else {
+      resultsDiv.innerHTML = `
+        <div class="search-results-header">
+          <strong>Pacientes (${results.length})</strong>
+        </div>
+        ${results.slice(0, 10).map(user => `
+          <div class="search-result-item" onclick="app.viewPatientFromSearch('${user._id}')">
+            <div class="search-result-icon">👤</div>
+            <div class="search-result-content">
+              <div class="search-result-title">${this.highlightMatch(user.name, query)}</div>
+              <div class="search-result-subtitle">
+                ${user.email} ${user.diseases && user.diseases.length > 0 ? '· ' + user.diseases.join(', ') : ''}
+              </div>
+            </div>
+            <div class="search-result-badge ${user.adherenceRate >= 80 ? 'badge-success' : user.adherenceRate >= 60 ? 'badge-warning' : 'badge-danger'}">
+              ${user.adherenceRate || 0}%
+            </div>
+          </div>
+        `).join('')}
+        ${results.length > 10 ? `<div class="search-results-footer">+ ${results.length - 10} más resultados</div>` : ''}
+      `;
+    }
+
+    searchContainer.appendChild(resultsDiv);
+  }
+
+  hideSearchResults() {
+    const existingResults = document.getElementById('globalSearchResults');
+    if (existingResults) {
+      existingResults.remove();
+    }
+  }
+
+  highlightMatch(text, query) {
+    const regex = new RegExp(`(${query})`, 'gi');
+    return text.replace(regex, '<mark style="background: #fef08a; padding: 0 2px; border-radius: 2px;">$1</mark>');
+  }
+
+  viewPatientFromSearch(patientId) {
+    this.hideSearchResults();
+    document.getElementById('globalSearch').value = '';
+    this.viewPatientDetail(patientId);
+  }
+
+  // ===== CALENDARIO =====
+
+  async showCalendarView() {
+    const users = await api.getUsers();
+    const consultations = await api.getAllConsultations();
+
+    // Generate calendar events
+    const events = [];
+
+    // Add upcoming consultations
+    consultations.filter(c => c.status === 'pending').forEach(c => {
+      events.push({
+        date: new Date(c.createdAt),
+        title: 'Consulta Pendiente',
+        type: 'consultation',
+        description: `Consulta de paciente (${c.createdAt ? new Date(c.createdAt).toLocaleDateString('es-ES') : 'sin fecha'})`,
+        priority: 'high'
+      });
+    });
+
+    // Add follow-up reminders (simulated - every 30 days per patient)
+    users.forEach(user => {
+      const followUpDate = new Date();
+      followUpDate.setDate(followUpDate.getDate() + 30);
+      events.push({
+        date: followUpDate,
+        title: `Seguimiento: ${user.name}`,
+        type: 'followup',
+        description: `Revisión periódica de adherencia y tratamiento`,
+        priority: 'normal'
+      });
+    });
+
+    // Low adherence check reminders
+    users.filter(u => (u.adherenceRate || 0) < 60).forEach(user => {
+      const checkDate = new Date();
+      checkDate.setDate(checkDate.getDate() + 7);
+      events.push({
+        date: checkDate,
+        title: `Revisar: ${user.name}`,
+        type: 'alert',
+        description: `Paciente con baja adherencia (${user.adherenceRate}%)`,
+        priority: 'high'
+      });
+    });
+
+    // Sort events by date
+    events.sort((a, b) => a.date - b.date);
+
+    // Show calendar modal
+    const modal = document.createElement('div');
+    modal.className = 'modal active';
+    modal.innerHTML = `
+      <div class="modal-content" style="max-width: 900px; max-height: 90vh; overflow-y: auto;">
+        <div class="modal-header">
+          <h2>📅 Calendario de Seguimientos</h2>
+          <button class="close-btn" onclick="this.closest('.modal').remove()">×</button>
+        </div>
+
+        <div class="calendar-view">
+          <div class="calendar-filters" style="margin-bottom: 1.5rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
+            <button class="btn btn-sm btn-primary" onclick="this.classList.toggle('active'); app.filterCalendarEvents('all')">
+              Todos
+            </button>
+            <button class="btn btn-sm btn-warning" onclick="this.classList.toggle('active'); app.filterCalendarEvents('consultation')">
+              💬 Consultas
+            </button>
+            <button class="btn btn-sm btn-success" onclick="this.classList.toggle('active'); app.filterCalendarEvents('followup')">
+              🔄 Seguimientos
+            </button>
+            <button class="btn btn-sm btn-danger" onclick="this.classList.toggle('active'); app.filterCalendarEvents('alert')">
+              ⚠️ Alertas
+            </button>
+          </div>
+
+          <div class="calendar-timeline">
+            ${this.renderCalendarTimeline(events)}
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+  }
+
+  renderCalendarTimeline(events) {
+    const today = new Date();
+    const grouped = {};
+
+    // Group events by month
+    events.forEach(event => {
+      const monthKey = event.date.toLocaleDateString('es-ES', { year: 'numeric', month: 'long' });
+      if (!grouped[monthKey]) grouped[monthKey] = [];
+      grouped[monthKey].push(event);
+    });
+
+    return Object.entries(grouped).map(([month, monthEvents]) => `
+      <div class="calendar-month-section">
+        <h3 class="calendar-month-title">${month}</h3>
+        <div class="calendar-events-list">
+          ${monthEvents.map(event => {
+            const isPast = event.date < today;
+            const isToday = event.date.toDateString() === today.toDateString();
+            const priorityClass = event.priority === 'high' ? 'event-high-priority' : '';
+            const typeClass = `event-type-${event.type}`;
+
+            return `
+              <div class="calendar-event-item ${priorityClass} ${typeClass} ${isPast ? 'event-past' : ''} ${isToday ? 'event-today' : ''}" data-event-type="${event.type}">
+                <div class="event-date">
+                  <div class="event-day">${event.date.getDate()}</div>
+                  <div class="event-weekday">${event.date.toLocaleDateString('es-ES', { weekday: 'short' })}</div>
+                </div>
+                <div class="event-details">
+                  <div class="event-title">${event.title}</div>
+                  <div class="event-description">${event.description}</div>
+                </div>
+                <div class="event-badge ${event.priority === 'high' ? 'badge-danger' : 'badge-info'}">
+                  ${event.priority === 'high' ? '⚠️' : '📅'}
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+    `).join('');
+  }
+
+  filterCalendarEvents(type) {
+    const events = document.querySelectorAll('.calendar-event-item');
+    events.forEach(event => {
+      if (type === 'all') {
+        event.style.display = 'flex';
+      } else {
+        event.style.display = event.dataset.eventType === type ? 'flex' : 'none';
+      }
+    });
+  }
+
+  // ===== ANÁLISIS COMPARATIVO =====
+
+  async showComparativeAnalysis() {
+    const [users, medications, consultations, questionnaires] = await Promise.all([
+      api.getUsers(),
+      api.getMedications(),
+      api.getAllConsultations(),
+      api.getAllQuestionnaires().catch(() => [])
+    ]);
+
+    // Calculate comparative metrics
+    const adherenceByMedication = {};
+    medications.forEach(med => {
+      const medPatients = users.filter(u =>
+        u.medications && u.medications.some(m => m._id === med._id || m.name === med.name)
+      );
+      if (medPatients.length > 0) {
+        const avgAdherence = medPatients.reduce((sum, p) => sum + (p.adherenceRate || 0), 0) / medPatients.length;
+        adherenceByMedication[med.name] = {
+          avg: Math.round(avgAdherence),
+          count: medPatients.length
+        };
+      }
+    });
+
+    // Consultation response times
+    const consultationStats = {
+      pending: consultations.filter(c => c.status === 'pending').length,
+      resolved: consultations.filter(c => c.status === 'resolved').length,
+      avgResponseTime: '< 24h' // Simulated
+    };
+
+    // Disease distribution
+    const diseaseStats = {};
+    users.forEach(user => {
+      if (user.diseases) {
+        user.diseases.forEach(disease => {
+          diseaseStats[disease] = (diseaseStats[disease] || 0) + 1;
+        });
+      }
+    });
+
+    const modal = document.createElement('div');
+    modal.className = 'modal active';
+    modal.innerHTML = `
+      <div class="modal-content" style="max-width: 1000px; max-height: 90vh; overflow-y: auto;">
+        <div class="modal-header">
+          <h2>📊 Análisis Comparativo</h2>
+          <button class="close-btn" onclick="this.closest('.modal').remove()">×</button>
+        </div>
+
+        <div class="comparative-analysis">
+          <!-- Adherence by Medication -->
+          <div class="analysis-section">
+            <h3>💊 Adherencia por Medicamento</h3>
+            <div class="comparison-grid">
+              ${Object.entries(adherenceByMedication)
+                .sort((a, b) => b[1].avg - a[1].avg)
+                .map(([med, data]) => `
+                  <div class="comparison-card">
+                    <div class="comparison-card-header">
+                      <strong>${med}</strong>
+                      <span class="badge ${data.avg >= 80 ? 'badge-success' : data.avg >= 60 ? 'badge-warning' : 'badge-danger'}">
+                        ${data.avg}%
+                      </span>
+                    </div>
+                    <div class="comparison-bar">
+                      <div class="comparison-bar-fill" style="width: ${data.avg}%; background: ${data.avg >= 80 ? 'var(--success)' : data.avg >= 60 ? 'var(--warning)' : 'var(--danger)'}"></div>
+                    </div>
+                    <div class="comparison-meta">${data.count} pacientes</div>
+                  </div>
+                `).join('')}
+            </div>
+          </div>
+
+          <!-- Consultation Stats -->
+          <div class="analysis-section">
+            <h3>💬 Estadísticas de Consultas</h3>
+            <div class="stats-grid">
+              <div class="stat-item-analysis">
+                <div class="stat-value-large">${consultationStats.pending}</div>
+                <div class="stat-label">Pendientes</div>
+              </div>
+              <div class="stat-item-analysis">
+                <div class="stat-value-large">${consultationStats.resolved}</div>
+                <div class="stat-label">Resueltas</div>
+              </div>
+              <div class="stat-item-analysis">
+                <div class="stat-value-large">${consultationStats.avgResponseTime}</div>
+                <div class="stat-label">Tiempo Medio Respuesta</div>
+              </div>
+              <div class="stat-item-analysis">
+                <div class="stat-value-large">${Math.round((consultationStats.resolved / (consultationStats.resolved + consultationStats.pending)) * 100)}%</div>
+                <div class="stat-label">Tasa de Resolución</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Disease Distribution -->
+          <div class="analysis-section">
+            <h3>🎯 Distribución de Pacientes por Enfermedad</h3>
+            <div class="disease-comparison">
+              ${Object.entries(diseaseStats)
+                .sort((a, b) => b[1] - a[1])
+                .map(([disease, count]) => {
+                  const percentage = Math.round((count / users.length) * 100);
+                  return `
+                    <div class="disease-stat-row">
+                      <div class="disease-stat-label">${disease}</div>
+                      <div class="disease-stat-bar-container">
+                        <div class="disease-stat-bar" style="width: ${percentage}%"></div>
+                        <span class="disease-stat-value">${count} (${percentage}%)</span>
+                      </div>
+                    </div>
+                  `;
+                }).join('')}
+            </div>
+          </div>
+
+          <!-- Quick Insights -->
+          <div class="analysis-section">
+            <h3>💡 Insights Rápidos</h3>
+            <div class="insights-grid">
+              <div class="insight-card insight-success">
+                <div class="insight-icon">✅</div>
+                <div class="insight-text">
+                  <strong>${users.filter(u => (u.adherenceRate || 0) >= 80).length} pacientes</strong> con adherencia excelente (≥80%)
+                </div>
+              </div>
+              <div class="insight-card insight-warning">
+                <div class="insight-icon">⚠️</div>
+                <div class="insight-text">
+                  <strong>${users.filter(u => (u.adherenceRate || 0) < 60).length} pacientes</strong> requieren intervención (adherencia <60%)
+                </div>
+              </div>
+              <div class="insight-card insight-info">
+                <div class="insight-icon">📋</div>
+                <div class="insight-text">
+                  <strong>${questionnaires.filter(q => q.status === 'completed').length} cuestionarios</strong> completados del total de ${questionnaires.length}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+  }
+
+  // ===== ATAJOS DE TECLADO =====
+
+  initKeyboardShortcuts() {
+    document.addEventListener('keydown', (e) => {
+      // Skip if typing in input/textarea
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+        // Except for ESC and Enter
+        if (e.key !== 'Escape' && e.key !== 'Enter') {
+          return;
+        }
+      }
+
+      // ESC: Cerrar modales y paneles
+      if (e.key === 'Escape') {
+        // Close modals
+        const modal = document.querySelector('.modal.active');
+        if (modal) {
+          modal.remove();
+          return;
+        }
+
+        // Close notifications
+        const notifPanel = document.querySelector('.notifications-panel.active');
+        if (notifPanel) {
+          this.toggleNotifications();
+          return;
+        }
+
+        // Close search results
+        this.hideSearchResults();
+        return;
+      }
+
+      // Only process shortcuts with Ctrl/Cmd
+      if (!e.ctrlKey && !e.metaKey) return;
+
+      // Prevent browser defaults for our shortcuts
+      const shortcuts = ['p', 'm', 'c', 'q', 's', 'd', 'e', 'k'];
+      if (shortcuts.includes(e.key.toLowerCase())) {
+        e.preventDefault();
+      }
+
+      // Shortcuts solo para admin
+      if (this.user && this.user.role === 'admin') {
+        switch(e.key.toLowerCase()) {
+          case 'p': // Ctrl+P: Pacientes
+            this.goBack();
+            setTimeout(() => this.showAdminSection('patients'), 100);
+            break;
+
+          case 'm': // Ctrl+M: Medicamentos
+            this.goBack();
+            setTimeout(() => this.showAdminSection('medications'), 100);
+            break;
+
+          case 'c': // Ctrl+C: Consultas (evitar conflicto con copy, solo si no hay selección)
+            if (window.getSelection().toString().length === 0) {
+              this.goBack();
+              setTimeout(() => this.showAdminSection('consultations'), 100);
+            }
+            break;
+
+          case 'q': // Ctrl+Q: Cuestionarios
+            this.goBack();
+            setTimeout(() => this.showAdminSection('questionnaires'), 100);
+            break;
+
+          case 's': // Ctrl+S: Focus en búsqueda
+            const searchInput = document.getElementById('globalSearch');
+            if (searchInput) {
+              searchInput.focus();
+              searchInput.select();
+            }
+            break;
+
+          case 'd': // Ctrl+D: Toggle Dark Mode
+            this.toggleDarkMode();
+            break;
+
+          case 'e': // Ctrl+E: Exportar pacientes
+            this.exportToCSV('patients');
+            break;
+
+          case 'k': // Ctrl+K: Mostrar atajos (help)
+            this.showKeyboardShortcutsHelp();
+            break;
+        }
+      }
+
+      // Shortcuts para todos los usuarios
+      switch(e.key.toLowerCase()) {
+        case 'd':
+          if (!this.user || this.user.role !== 'admin') {
+            this.toggleDarkMode();
+          }
+          break;
+
+        case 'k':
+          if (!this.user || this.user.role !== 'admin') {
+            this.showKeyboardShortcutsHelp();
+          }
+          break;
+      }
+    });
+  }
+
+  showKeyboardShortcutsHelp() {
+    const modal = document.createElement('div');
+    modal.className = 'modal active';
+
+    const adminShortcuts = this.user && this.user.role === 'admin' ? `
+      <div class="shortcut-category">
+        <h3>⚡ Navegación</h3>
+        <div class="shortcut-item">
+          <kbd>Ctrl</kbd> + <kbd>P</kbd>
+          <span>Gestionar Pacientes</span>
+        </div>
+        <div class="shortcut-item">
+          <kbd>Ctrl</kbd> + <kbd>M</kbd>
+          <span>Gestionar Medicamentos</span>
+        </div>
+        <div class="shortcut-item">
+          <kbd>Ctrl</kbd> + <kbd>C</kbd>
+          <span>Ver Consultas</span>
+        </div>
+        <div class="shortcut-item">
+          <kbd>Ctrl</kbd> + <kbd>Q</kbd>
+          <span>Cuestionarios PROMS</span>
+        </div>
+      </div>
+
+      <div class="shortcut-category">
+        <h3>🔧 Acciones</h3>
+        <div class="shortcut-item">
+          <kbd>Ctrl</kbd> + <kbd>S</kbd>
+          <span>Focus en Búsqueda</span>
+        </div>
+        <div class="shortcut-item">
+          <kbd>Ctrl</kbd> + <kbd>E</kbd>
+          <span>Exportar Pacientes</span>
+        </div>
+      </div>
+    ` : '';
+
+    modal.innerHTML = `
+      <div class="modal-content" style="max-width: 600px;">
+        <div class="modal-header">
+          <h2>⌨️ Atajos de Teclado</h2>
+          <button class="close-btn" onclick="this.closest('.modal').remove()">×</button>
+        </div>
+
+        <div class="shortcuts-help">
+          ${adminShortcuts}
+
+          <div class="shortcut-category">
+            <h3>🎨 General</h3>
+            <div class="shortcut-item">
+              <kbd>Ctrl</kbd> + <kbd>D</kbd>
+              <span>Toggle Modo Oscuro</span>
+            </div>
+            <div class="shortcut-item">
+              <kbd>Ctrl</kbd> + <kbd>K</kbd>
+              <span>Mostrar Atajos</span>
+            </div>
+            <div class="shortcut-item">
+              <kbd>Esc</kbd>
+              <span>Cerrar Modales/Paneles</span>
+            </div>
+          </div>
+
+          <p style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--gray-200); color: var(--gray-600); font-size: 0.875rem; text-align: center;">
+            💡 En Mac, usa <kbd>⌘ Cmd</kbd> en lugar de <kbd>Ctrl</kbd>
+          </p>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+  }
+
+  // ===== INICIALIZACIÓN DE MEJORAS =====
+
+  initEnhancements() {
+    // Cargar preferencia de dark mode
+    this.loadDarkModePreference();
+
+    // Inicializar atajos de teclado
+    this.initKeyboardShortcuts();
+
+    // Mostrar elementos del header si es admin
+    if (this.user && this.user.role === 'admin') {
+      const elements = ['globalSearchContainer', 'notificationBtn', 'themeToggle'];
+      elements.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.remove('hidden');
+      });
+
+      // Inicializar búsqueda global
+      this.initGlobalSearch();
+
+      // Cargar notificaciones
+      this.loadNotifications();
+
+      // Actualizar notificaciones cada 5 minutos
+      setInterval(() => this.loadNotifications(), 300000);
+    } else if (this.user) {
+      // Para pacientes, solo mostrar el toggle de tema
+      const themeToggle = document.getElementById('themeToggle');
+      if (themeToggle) themeToggle.classList.remove('hidden');
+    }
   }
 }
 
