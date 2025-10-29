@@ -3314,6 +3314,295 @@ class FarmaFollowApp {
       </div>
     `;
   }
+
+  // ===== DARK MODE =====
+
+  toggleDarkMode() {
+    document.body.classList.toggle('dark-mode');
+    const isDark = document.body.classList.contains('dark-mode');
+
+    // Persistir preferencia
+    localStorage.setItem('darkMode', isDark ? 'enabled' : 'disabled');
+
+    // Cambiar icono
+    const themeBtn = document.getElementById('themeToggle');
+    if (themeBtn) {
+      themeBtn.textContent = isDark ? '☀️' : '🌙';
+    }
+  }
+
+  loadDarkModePreference() {
+    const darkMode = localStorage.getItem('darkMode');
+    if (darkMode === 'enabled') {
+      document.body.classList.add('dark-mode');
+      const themeBtn = document.getElementById('themeToggle');
+      if (themeBtn) themeBtn.textContent = '☀️';
+    }
+  }
+
+  // ===== SISTEMA DE NOTIFICACIONES =====
+
+  notifications = [];
+
+  updateNotificationBadge() {
+    const badge = document.getElementById('notificationBadge');
+    const unreadCount = this.notifications.filter(n => !n.read).length;
+
+    if (badge) {
+      if (unreadCount > 0) {
+        badge.textContent = unreadCount > 9 ? '9+' : unreadCount;
+        badge.classList.remove('hidden');
+      } else {
+        badge.classList.add('hidden');
+      }
+    }
+  }
+
+  async loadNotifications() {
+    // Cargar notificaciones desde las consultas pendientes y otros eventos
+    try {
+      if (this.user.role === 'admin') {
+        const [consultations, questionnaires] = await Promise.all([
+          api.getAllConsultations().catch(() => []),
+          api.getAllQuestionnaires().catch(() => [])
+        ]);
+
+        this.notifications = [];
+
+        // Notificaciones de consultas pendientes
+        const pendingConsults = consultations.filter(c => c.status === 'pending');
+        pendingConsults.forEach(c => {
+          this.notifications.push({
+            id: `consult-${c._id}`,
+            title: 'Nueva consulta',
+            message: `Consulta de paciente: ${c.message?.substring(0, 50)}...`,
+            time: this.getTimeAgo(c.createdAt),
+            read: false,
+            action: () => this.showAdminSection('consultations')
+          });
+        });
+
+        // Notificaciones de cuestionarios sin responder
+        const activeQuest = questionnaires.filter(q => q.status === 'active');
+        if (activeQuest.length > 0) {
+          this.notifications.push({
+            id: 'quest-active',
+            title: 'Cuestionarios activos',
+            message: `Tienes ${activeQuest.length} cuestionario(s) activo(s)`,
+            time: 'Ahora',
+            read: false,
+            action: () => this.showAdminSection('questionnaires')
+          });
+        }
+      }
+
+      this.updateNotificationBadge();
+    } catch (error) {
+      logger.error('Error cargando notificaciones:', error);
+    }
+  }
+
+  toggleNotifications() {
+    // Crear panel si no existe
+    let panel = document.getElementById('notificationsPanel');
+
+    if (!panel) {
+      panel = document.createElement('div');
+      panel.id = 'notificationsPanel';
+      panel.className = 'notifications-panel';
+      panel.innerHTML = `
+        <div class="notifications-header">
+          <h3>Notificaciones</h3>
+          <button class="mark-all-read" onclick="app.markAllAsRead()">Marcar todas como leídas</button>
+        </div>
+        <div class="notifications-list" id="notificationsList">
+          ${this.renderNotifications()}
+        </div>
+      `;
+      document.body.appendChild(panel);
+    }
+
+    panel.classList.toggle('active');
+
+    // Cerrar al hacer click fuera
+    if (panel.classList.contains('active')) {
+      setTimeout(() => {
+        document.addEventListener('click', function closePanel(e) {
+          if (!panel.contains(e.target) && !document.getElementById('notificationBtn').contains(e.target)) {
+            panel.classList.remove('active');
+            document.removeEventListener('click', closePanel);
+          }
+        });
+      }, 100);
+    }
+  }
+
+  renderNotifications() {
+    if (this.notifications.length === 0) {
+      return '<div style="padding: 2rem; text-align: center; color: var(--gray-500);">No hay notificaciones</div>';
+    }
+
+    return this.notifications.map(n => `
+      <div class="notification-item ${n.read ? '' : 'unread'}" onclick="app.handleNotificationClick('${n.id}')">
+        <div class="notification-title">${n.title}</div>
+        <div class="notification-message">${n.message}</div>
+        <div class="notification-time">${n.time}</div>
+      </div>
+    `).join('');
+  }
+
+  handleNotificationClick(notificationId) {
+    const notification = this.notifications.find(n => n.id === notificationId);
+    if (notification) {
+      notification.read = true;
+      this.updateNotificationBadge();
+
+      // Ejecutar acción
+      if (notification.action) {
+        notification.action();
+      }
+
+      // Cerrar panel
+      document.getElementById('notificationsPanel')?.classList.remove('active');
+    }
+  }
+
+  markAllAsRead() {
+    this.notifications.forEach(n => n.read = true);
+    this.updateNotificationBadge();
+
+    const list = document.getElementById('notificationsList');
+    if (list) {
+      list.innerHTML = this.renderNotifications();
+    }
+  }
+
+  getTimeAgo(date) {
+    const seconds = Math.floor((new Date() - new Date(date)) / 1000);
+
+    if (seconds < 60) return 'Ahora';
+    if (seconds < 3600) return `Hace ${Math.floor(seconds / 60)} min`;
+    if (seconds < 86400) return `Hace ${Math.floor(seconds / 3600)} h`;
+    return `Hace ${Math.floor(seconds / 86400)} días`;
+  }
+
+  // ===== EXPORTACIÓN DE DATOS =====
+
+  async exportToCSV(type) {
+    try {
+      let data = [];
+      let headers = [];
+      let filename = '';
+
+      switch(type) {
+        case 'patients':
+          const users = await api.getUsers();
+          headers = ['Nombre', 'Email', 'Teléfono', 'Adherencia %', 'Enfermedades'];
+          data = users.map(u => [
+            u.name,
+            u.email,
+            u.phone || '',
+            u.adherenceRate || 0,
+            (u.diseases || []).join('; ')
+          ]);
+          filename = 'pacientes';
+          break;
+
+        case 'consultations':
+          const consultations = await api.getAllConsultations();
+          headers = ['Fecha', 'Paciente', 'Mensaje', 'Estado', 'Respuesta'];
+          data = consultations.map(c => [
+            new Date(c.createdAt).toLocaleDateString('es-ES'),
+            c.patient?.name || 'Desconocido',
+            c.message,
+            c.status,
+            c.response || ''
+          ]);
+          filename = 'consultas';
+          break;
+
+        case 'questionnaires':
+          const questionnaires = await api.getAllQuestionnaires();
+          headers = ['Título', 'Tipo', 'Estado', 'Preguntas', 'Creado'];
+          data = questionnaires.map(q => [
+            q.title,
+            q.type,
+            q.status,
+            q.questions?.length || 0,
+            new Date(q.createdAt).toLocaleDateString('es-ES')
+          ]);
+          filename = 'cuestionarios';
+          break;
+      }
+
+      this.downloadCSV(headers, data, filename);
+      this.showMessage('✅ Datos exportados correctamente', 'success');
+
+    } catch (error) {
+      this.showMessage('Error exportando datos: ' + error.message, 'error');
+    }
+  }
+
+  downloadCSV(headers, rows, filename) {
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+    ].join('\n');
+
+    const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+
+    link.setAttribute('href', url);
+    link.setAttribute('download', `${filename}_${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+
+  // ===== ACCIONES RÁPIDAS =====
+
+  quickActionLowAdherence() {
+    this.showAdminSection('patients');
+    // Filtrar por baja adherencia (implementar filtro después)
+    this.showMessage('Mostrando pacientes con baja adherencia...', 'info');
+  }
+
+  quickActionPendingConsultations() {
+    this.showAdminSection('consultations');
+  }
+
+  quickActionExportPatients() {
+    this.exportToCSV('patients');
+  }
+
+  // ===== INICIALIZACIÓN DE MEJORAS =====
+
+  initEnhancements() {
+    // Cargar preferencia de dark mode
+    this.loadDarkModePreference();
+
+    // Mostrar elementos del header si es admin
+    if (this.user && this.user.role === 'admin') {
+      const elements = ['globalSearchContainer', 'notificationBtn', 'themeToggle'];
+      elements.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.remove('hidden');
+      });
+
+      // Cargar notificaciones
+      this.loadNotifications();
+
+      // Actualizar notificaciones cada 5 minutos
+      setInterval(() => this.loadNotifications(), 300000);
+    } else if (this.user) {
+      // Para pacientes, solo mostrar el toggle de tema
+      const themeToggle = document.getElementById('themeToggle');
+      if (themeToggle) themeToggle.classList.remove('hidden');
+    }
+  }
 }
 
 
