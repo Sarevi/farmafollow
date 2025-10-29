@@ -1606,7 +1606,167 @@ class FarmaFollowApp {
   }
 
   async editMedication(medicationId) {
-    this.showMessage('Funcionalidad de edición disponible próximamente', 'info');
+    try {
+      // Cerrar modal actual
+      document.querySelector('.modal')?.remove();
+
+      const medication = await api.getMedication(medicationId);
+
+      const modal = document.createElement('div');
+      modal.className = 'modal active';
+      modal.innerHTML = `
+        <div class="modal-content" style="max-width: 700px; max-height: 90vh; overflow-y: auto;">
+          <div class="modal-header">
+            <h2>✏️ Editar Medicamento: ${medication.name}</h2>
+            <button class="close-btn" onclick="this.closest('.modal').remove()">×</button>
+          </div>
+
+          <form id="editMedicationForm">
+            <div class="form-group">
+              <label class="form-label">Nombre del Medicamento *</label>
+              <input type="text" id="editMedName" class="form-input" value="${medication.name}" required>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Descripción *</label>
+              <textarea id="editMedDescription" class="form-textarea" rows="3" required>${medication.description}</textarea>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Principio Activo</label>
+              <input type="text" id="editMedActiveIngredient" class="form-input" value="${medication.activeIngredient || ''}">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">URL del Video (YouTube)</label>
+              <input type="url" id="editMedVideoUrl" class="form-input" value="${medication.videoUrl || ''}"
+                placeholder="https://youtube.com/...">
+            </div>
+
+            <hr style="margin: 1.5rem 0;">
+
+            <div style="background: var(--gray-50); padding: 1.5rem; border-radius: 0.75rem; margin-bottom: 1rem;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                <h3 style="margin: 0;">❓ Preguntas Frecuentes (FAQs)</h3>
+                <button type="button" class="btn btn-sm btn-success" onclick="app.addFAQInEditModal()">
+                  + Agregar FAQ
+                </button>
+              </div>
+
+              <div id="faqsEditList">
+                ${medication.faqs && medication.faqs.length > 0 ? medication.faqs.map((faq, index) => `
+                  <div class="faq-edit-item" data-faq-index="${index}" style="background: white; padding: 1rem; border-radius: 0.5rem; margin-bottom: 0.75rem; border: 1px solid var(--gray-200);">
+                    <div style="display: flex; justify-content: between; align-items: start; gap: 0.5rem;">
+                      <div style="flex: 1;">
+                        <input type="text" class="form-input" style="margin-bottom: 0.5rem;"
+                          value="${faq.question}" data-faq-question="${index}" placeholder="Pregunta">
+                        <textarea class="form-textarea" rows="2"
+                          data-faq-answer="${index}" placeholder="Respuesta">${faq.answer}</textarea>
+                        <input type="hidden" data-faq-id="${index}" value="${faq._id || ''}">
+                      </div>
+                      <button type="button" class="btn btn-sm btn-danger" onclick="this.closest('.faq-edit-item').remove()" title="Eliminar">
+                        🗑️
+                      </button>
+                    </div>
+                  </div>
+                `).join('') : '<p style="color: var(--gray-500); text-align: center;">No hay FAQs aún. Haz clic en "+ Agregar FAQ" para añadir.</p>'}
+              </div>
+            </div>
+
+            <div class="modal-actions">
+              <button type="submit" class="btn btn-primary">💾 Guardar Cambios</button>
+              <button type="button" class="btn btn-secondary" onclick="this.closest('.modal').remove()">
+                Cancelar
+              </button>
+            </div>
+          </form>
+        </div>
+      `;
+
+      document.body.appendChild(modal);
+
+      document.getElementById('editMedicationForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        await this.saveMedicationChanges(medicationId);
+      });
+
+    } catch (error) {
+      this.showMessage('Error cargando medicamento: ' + error.message, 'error');
+    }
+  }
+
+  addFAQInEditModal() {
+    const container = document.getElementById('faqsEditList');
+
+    // Remover mensaje de "no hay FAQs" si existe
+    const emptyMsg = container.querySelector('p');
+    if (emptyMsg) emptyMsg.remove();
+
+    const index = container.querySelectorAll('.faq-edit-item').length;
+
+    const faqItem = document.createElement('div');
+    faqItem.className = 'faq-edit-item';
+    faqItem.setAttribute('data-faq-index', index);
+    faqItem.style = 'background: white; padding: 1rem; border-radius: 0.5rem; margin-bottom: 0.75rem; border: 1px solid var(--gray-200);';
+    faqItem.innerHTML = `
+      <div style="display: flex; justify-content: between; align-items: start; gap: 0.5rem;">
+        <div style="flex: 1;">
+          <input type="text" class="form-input" style="margin-bottom: 0.5rem;"
+            data-faq-question="${index}" placeholder="Pregunta">
+          <textarea class="form-textarea" rows="2"
+            data-faq-answer="${index}" placeholder="Respuesta"></textarea>
+          <input type="hidden" data-faq-id="${index}" value="">
+        </div>
+        <button type="button" class="btn btn-sm btn-danger" onclick="this.closest('.faq-edit-item').remove()" title="Eliminar">
+          🗑️
+        </button>
+      </div>
+    `;
+
+    container.appendChild(faqItem);
+  }
+
+  async saveMedicationChanges(medicationId) {
+    try {
+      const name = document.getElementById('editMedName').value;
+      const description = document.getElementById('editMedDescription').value;
+      const activeIngredient = document.getElementById('editMedActiveIngredient').value;
+      const videoUrl = document.getElementById('editMedVideoUrl').value;
+
+      // Recoger FAQs
+      const faqItems = document.querySelectorAll('.faq-edit-item');
+      const faqs = [];
+
+      faqItems.forEach((item, index) => {
+        const question = item.querySelector(`[data-faq-question="${index}"]`)?.value;
+        const answer = item.querySelector(`[data-faq-answer="${index}"]`)?.value;
+        const faqId = item.querySelector(`[data-faq-id="${index}"]`)?.value;
+
+        if (question && answer) {
+          faqs.push({
+            _id: faqId || undefined,
+            question: question.trim(),
+            answer: answer.trim()
+          });
+        }
+      });
+
+      // Actualizar medicamento
+      await api.updateMedication(medicationId, {
+        name,
+        description,
+        activeIngredient,
+        videoUrl,
+        faqs
+      });
+
+      this.showMessage('✅ Medicamento actualizado correctamente', 'success');
+      document.querySelector('.modal').remove();
+      this.showAdminSection('medications');
+
+    } catch (error) {
+      this.showMessage('Error guardando cambios: ' + error.message, 'error');
+    }
   }
 
   async deleteMedication(medicationId) {
