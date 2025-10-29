@@ -3926,6 +3926,118 @@ class FarmaFollowApp {
     this.exportToCSV('patients');
   }
 
+  // ===== BÚSQUEDA GLOBAL =====
+
+  searchTimeout = null;
+
+  initGlobalSearch() {
+    const searchInput = document.getElementById('globalSearch');
+    if (!searchInput) return;
+
+    searchInput.addEventListener('input', (e) => {
+      clearTimeout(this.searchTimeout);
+      const query = e.target.value.trim();
+
+      if (query.length === 0) {
+        this.hideSearchResults();
+        return;
+      }
+
+      // Debounce search
+      this.searchTimeout = setTimeout(() => {
+        this.performGlobalSearch(query);
+      }, 300);
+    });
+
+    // Close on click outside
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('.search-container') && !e.target.closest('.search-results')) {
+        this.hideSearchResults();
+      }
+    });
+  }
+
+  async performGlobalSearch(query) {
+    try {
+      const users = await api.getUsers();
+      const lowerQuery = query.toLowerCase();
+
+      // Search in patients
+      const results = users.filter(user => {
+        return user.name.toLowerCase().includes(lowerQuery) ||
+               user.email.toLowerCase().includes(lowerQuery) ||
+               (user.phone && user.phone.includes(query)) ||
+               (user.diseases && user.diseases.some(d => d.toLowerCase().includes(lowerQuery))) ||
+               (user.medications && user.medications.some(m => m.name && m.name.toLowerCase().includes(lowerQuery)));
+      });
+
+      this.showSearchResults(results, query);
+    } catch (error) {
+      logger.error('Error en búsqueda global:', error);
+    }
+  }
+
+  showSearchResults(results, query) {
+    // Remove existing results
+    this.hideSearchResults();
+
+    const searchContainer = document.querySelector('.search-container');
+    if (!searchContainer) return;
+
+    const resultsDiv = document.createElement('div');
+    resultsDiv.className = 'search-results';
+    resultsDiv.id = 'globalSearchResults';
+
+    if (results.length === 0) {
+      resultsDiv.innerHTML = `
+        <div class="search-result-item" style="text-align: center; color: var(--gray-500);">
+          No se encontraron resultados para "${query}"
+        </div>
+      `;
+    } else {
+      resultsDiv.innerHTML = `
+        <div class="search-results-header">
+          <strong>Pacientes (${results.length})</strong>
+        </div>
+        ${results.slice(0, 10).map(user => `
+          <div class="search-result-item" onclick="app.viewPatientFromSearch('${user._id}')">
+            <div class="search-result-icon">👤</div>
+            <div class="search-result-content">
+              <div class="search-result-title">${this.highlightMatch(user.name, query)}</div>
+              <div class="search-result-subtitle">
+                ${user.email} ${user.diseases && user.diseases.length > 0 ? '· ' + user.diseases.join(', ') : ''}
+              </div>
+            </div>
+            <div class="search-result-badge ${user.adherenceRate >= 80 ? 'badge-success' : user.adherenceRate >= 60 ? 'badge-warning' : 'badge-danger'}">
+              ${user.adherenceRate || 0}%
+            </div>
+          </div>
+        `).join('')}
+        ${results.length > 10 ? `<div class="search-results-footer">+ ${results.length - 10} más resultados</div>` : ''}
+      `;
+    }
+
+    searchContainer.appendChild(resultsDiv);
+  }
+
+  hideSearchResults() {
+    const existingResults = document.getElementById('globalSearchResults');
+    if (existingResults) {
+      existingResults.remove();
+    }
+  }
+
+  highlightMatch(text, query) {
+    const regex = new RegExp(`(${query})`, 'gi');
+    return text.replace(regex, '<mark style="background: #fef08a; padding: 0 2px; border-radius: 2px;">$1</mark>');
+  }
+
+  viewPatientFromSearch(patientId) {
+    this.hideSearchResults();
+    document.getElementById('globalSearch').value = '';
+    this.viewPatientDetail(patientId);
+  }
+
   // ===== INICIALIZACIÓN DE MEJORAS =====
 
   initEnhancements() {
@@ -3939,6 +4051,9 @@ class FarmaFollowApp {
         const el = document.getElementById(id);
         if (el) el.classList.remove('hidden');
       });
+
+      // Inicializar búsqueda global
+      this.initGlobalSearch();
 
       // Cargar notificaciones
       this.loadNotifications();
