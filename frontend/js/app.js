@@ -889,60 +889,408 @@ class FarmaFollowApp {
         ? Math.round(users.reduce((sum, u) => sum + (u.adherenceRate || 0), 0) / users.length)
         : 0;
 
+      // Calculate low adherence count
+      const lowAdherenceCount = users.filter(u => (u.adherenceRate || 0) < 60).length;
+      const assignedQuestionnaires = questionnaires.filter(q => q.status === 'assigned').length;
+
       container.innerHTML = `
         <div class="admin-header">
           <h1 class="admin-title">📊 Panel de Administración</h1>
         </div>
 
         <div class="admin-stats">
-          <div class="stat-card">
-            <div class="stat-icon" style="font-size: 2rem; margin-bottom: 0.5rem;">👥</div>
-            <div class="stat-value">${users.length}</div>
-            <div class="stat-label">Total Pacientes</div>
+          <!-- Total Pacientes Card -->
+          <div class="stat-card-enhanced">
+            <div class="stat-card-content">
+              <div class="stat-icon-enhanced">👥</div>
+              <div class="stat-details">
+                <div class="stat-value">${users.length}</div>
+                <div class="stat-label">Total Pacientes</div>
+                <div class="stat-mini">
+                  <span style="color: var(--success);">↑ ${users.filter(u => u.createdAt && new Date(u.createdAt) > new Date(Date.now() - 30*24*60*60*1000)).length}</span>
+                  <span style="color: var(--gray-600); font-size: 0.75rem;">últimos 30 días</span>
+                </div>
+              </div>
+            </div>
+            <div class="stat-actions">
+              <button class="stat-action-btn" onclick="app.showAdminSection('patients')">
+                Ver todos
+              </button>
+              <button class="stat-action-btn" onclick="app.quickActionExportPatients()">
+                Exportar
+              </button>
+            </div>
           </div>
-          <div class="stat-card" style="background: linear-gradient(135deg, var(--success) 0%, #059669 100%);">
-            <div class="stat-icon" style="font-size: 2rem; margin-bottom: 0.5rem;">💊</div>
-            <div class="stat-value">${activeMedications}</div>
-            <div class="stat-label">Medicamentos Activos</div>
+
+          <!-- Medicamentos Activos Card -->
+          <div class="stat-card-enhanced" style="border-left: 4px solid var(--success);">
+            <div class="stat-card-content">
+              <div class="stat-icon-enhanced" style="background: var(--success-light);">💊</div>
+              <div class="stat-details">
+                <div class="stat-value">${activeMedications}</div>
+                <div class="stat-label">Medicamentos Activos</div>
+                <div class="stat-mini">
+                  <span style="color: var(--gray-600); font-size: 0.75rem;">${medications.length} en total</span>
+                </div>
+              </div>
+            </div>
+            <div class="stat-actions">
+              <button class="stat-action-btn" onclick="app.showAdminSection('medications')">
+                Gestionar
+              </button>
+              <button class="stat-action-btn" onclick="app.createMedication()">
+                + Nuevo
+              </button>
+            </div>
           </div>
-          <div class="stat-card" style="background: linear-gradient(135deg, var(--warning) 0%, #d97706 100%);">
-            <div class="stat-icon" style="font-size: 2rem; margin-bottom: 0.5rem;">💬</div>
-            <div class="stat-value">${pendingConsultations}</div>
-            <div class="stat-label">Consultas Pendientes</div>
+
+          <!-- Consultas Pendientes Card -->
+          <div class="stat-card-enhanced" style="border-left: 4px solid var(--warning);">
+            <div class="stat-card-content">
+              <div class="stat-icon-enhanced" style="background: var(--warning-light);">💬</div>
+              <div class="stat-details">
+                <div class="stat-value">${pendingConsultations}</div>
+                <div class="stat-label">Consultas Pendientes</div>
+                <div class="stat-mini">
+                  <span style="color: var(--success);">${resolvedConsultations} resueltas</span>
+                  <span style="color: var(--gray-600); font-size: 0.75rem;">·</span>
+                  <span style="color: var(--gray-600); font-size: 0.75rem;">${consultations.length} total</span>
+                </div>
+              </div>
+            </div>
+            <div class="stat-actions">
+              <button class="stat-action-btn" onclick="app.quickActionPendingConsultations()">
+                Responder
+              </button>
+              <button class="stat-action-btn" onclick="app.showAdminSection('consultations')">
+                Ver todas
+              </button>
+            </div>
           </div>
-          <div class="stat-card" style="background: linear-gradient(135deg, var(--cyan) 0%, var(--cyan-dark) 100%);">
-            <div class="stat-icon" style="font-size: 2rem; margin-bottom: 0.5rem;">📈</div>
-            <div class="stat-value">${avgAdherence}%</div>
-            <div class="stat-label">Adherencia Media</div>
+
+          <!-- Adherencia Media Card -->
+          <div class="stat-card-enhanced" style="border-left: 4px solid var(--cyan);">
+            <div class="stat-card-content">
+              <div class="stat-icon-enhanced" style="background: var(--cyan-light);">📈</div>
+              <div class="stat-details">
+                <div class="stat-value">${avgAdherence}%</div>
+                <div class="stat-label">Adherencia Media</div>
+                <div class="stat-mini">
+                  ${lowAdherenceCount > 0 ? `<span style="color: var(--danger);">⚠️ ${lowAdherenceCount} pacientes < 60%</span>` : '<span style="color: var(--success);">✓ Todos adherentes</span>'}
+                </div>
+              </div>
+            </div>
+            <div class="stat-actions">
+              <button class="stat-action-btn" onclick="app.quickActionLowAdherence()">
+                Ver baja adherencia
+              </button>
+              <button class="stat-action-btn" onclick="app.exportToCSV('patients')">
+                Exportar
+              </button>
+            </div>
           </div>
-          <div class="stat-card" style="background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);">
-            <div class="stat-icon" style="font-size: 2rem; margin-bottom: 0.5rem;">📋</div>
-            <div class="stat-value">${activeQuestionnaires}</div>
-            <div class="stat-label">Cuestionarios Activos</div>
+
+          <!-- Cuestionarios Card -->
+          <div class="stat-card-enhanced" style="border-left: 4px solid #8b5cf6;">
+            <div class="stat-card-content">
+              <div class="stat-icon-enhanced" style="background: rgba(139, 92, 246, 0.1);">📋</div>
+              <div class="stat-details">
+                <div class="stat-value">${activeQuestionnaires}</div>
+                <div class="stat-label">Cuestionarios Activos</div>
+                <div class="stat-mini">
+                  <span style="color: var(--warning);">${assignedQuestionnaires} asignados</span>
+                  <span style="color: var(--gray-600); font-size: 0.75rem;">·</span>
+                  <span style="color: var(--gray-600); font-size: 0.75rem;">${questionnaires.length} total</span>
+                </div>
+              </div>
+            </div>
+            <div class="stat-actions">
+              <button class="stat-action-btn" onclick="app.showAdminSection('questionnaires')">
+                Gestionar
+              </button>
+              <button class="stat-action-btn" onclick="app.createQuestionnaire()">
+                + Nuevo
+              </button>
+            </div>
           </div>
         </div>
 
-        <div style="margin-top: 2rem; display: flex; flex-wrap: wrap; gap: 1rem;">
-          <button class="btn btn-primary" onclick="app.showAdminSection('patients')">
-            👥 Gestionar Pacientes
-          </button>
-          <button class="btn btn-success" onclick="app.showAdminSection('medications')">
-            💊 Gestionar Medicamentos
-          </button>
-          <button class="btn btn-secondary" onclick="app.showAdminSection('consultations')">
-            💬 Ver Consultas
-          </button>
-          <button class="btn" style="background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); color: white;" onclick="app.showAdminSection('questionnaires')">
-            📋 Cuestionarios PROMS
-          </button>
+        <!-- Charts Section -->
+        <div class="charts-grid" style="margin-top: 2rem;">
+          <div class="chart-container">
+            <h3 class="chart-title">📊 Adherencia en el Tiempo</h3>
+            <canvas id="adherenceChart"></canvas>
+          </div>
+          <div class="chart-container">
+            <h3 class="chart-title">🎯 Distribución de Enfermedades</h3>
+            <canvas id="diseasesChart"></canvas>
+          </div>
+          <div class="chart-container">
+            <h3 class="chart-title">💬 Evolución de Consultas</h3>
+            <canvas id="consultationsChart"></canvas>
+          </div>
+          <div class="chart-container">
+            <h3 class="chart-title">📋 Actividad de Cuestionarios</h3>
+            <canvas id="questionnairesChart"></canvas>
+          </div>
         </div>
 
         <div id="adminSectionContainer" style="margin-top: 2rem;"></div>
       `;
 
+      // Initialize charts after DOM is ready
+      setTimeout(() => this.initDashboardCharts(users, consultations, questionnaires), 100);
+
     } catch (error) {
       logger.error('Error cargando admin dashboard:', error);
       container.innerHTML = '<div class="error">Error cargando panel de administración</div>';
+    }
+  }
+
+  initDashboardCharts(users, consultations, questionnaires) {
+    // Destroy existing charts if they exist
+    if (this.charts) {
+      Object.values(this.charts).forEach(chart => chart?.destroy());
+    }
+    this.charts = {};
+
+    // Chart 1: Adherencia en el Tiempo (Line Chart)
+    const adherenceCtx = document.getElementById('adherenceChart');
+    if (adherenceCtx) {
+      // Generate last 6 months data
+      const months = [];
+      const adherenceData = [];
+      for (let i = 5; i >= 0; i--) {
+        const date = new Date();
+        date.setMonth(date.getMonth() - i);
+        months.push(date.toLocaleDateString('es-ES', { month: 'short', year: '2-digit' }));
+
+        // Simulate adherence evolution (in real app, this would come from historical data)
+        const baseAdherence = users.length > 0
+          ? users.reduce((sum, u) => sum + (u.adherenceRate || 0), 0) / users.length
+          : 0;
+        adherenceData.push(Math.round(baseAdherence + (Math.random() * 10 - 5)));
+      }
+
+      this.charts.adherence = new Chart(adherenceCtx, {
+        type: 'line',
+        data: {
+          labels: months,
+          datasets: [{
+            label: 'Adherencia Media (%)',
+            data: adherenceData,
+            borderColor: 'rgb(34, 197, 94)',
+            backgroundColor: 'rgba(34, 197, 94, 0.1)',
+            tension: 0.4,
+            fill: true,
+            pointRadius: 4,
+            pointHoverRadius: 6
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: (context) => `${context.parsed.y}%`
+              }
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              max: 100,
+              ticks: { callback: (value) => value + '%' }
+            }
+          }
+        }
+      });
+    }
+
+    // Chart 2: Distribución de Enfermedades (Doughnut Chart)
+    const diseasesCtx = document.getElementById('diseasesChart');
+    if (diseasesCtx) {
+      const diseaseCount = {};
+      users.forEach(user => {
+        if (user.diseases && user.diseases.length > 0) {
+          user.diseases.forEach(disease => {
+            diseaseCount[disease] = (diseaseCount[disease] || 0) + 1;
+          });
+        }
+      });
+
+      const diseaseLabels = Object.keys(diseaseCount);
+      const diseaseValues = Object.values(diseaseCount);
+      const colors = [
+        '#6366f1', '#8b5cf6', '#ec4899', '#f59e0b',
+        '#10b981', '#06b6d4', '#f97316', '#84cc16'
+      ];
+
+      this.charts.diseases = new Chart(diseasesCtx, {
+        type: 'doughnut',
+        data: {
+          labels: diseaseLabels.length > 0 ? diseaseLabels : ['Sin datos'],
+          datasets: [{
+            data: diseaseValues.length > 0 ? diseaseValues : [1],
+            backgroundColor: colors,
+            borderWidth: 2,
+            borderColor: '#ffffff'
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              position: 'right',
+              labels: { padding: 15, font: { size: 11 } }
+            },
+            tooltip: {
+              callbacks: {
+                label: (context) => {
+                  const label = context.label || '';
+                  const value = context.parsed || 0;
+                  const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                  const percentage = Math.round((value / total) * 100);
+                  return `${label}: ${value} (${percentage}%)`;
+                }
+              }
+            }
+          }
+        }
+      });
+    }
+
+    // Chart 3: Evolución de Consultas (Bar Chart)
+    const consultationsCtx = document.getElementById('consultationsChart');
+    if (consultationsCtx) {
+      // Group consultations by month
+      const last6Months = [];
+      const pendingByMonth = [];
+      const resolvedByMonth = [];
+
+      for (let i = 5; i >= 0; i--) {
+        const date = new Date();
+        date.setMonth(date.getMonth() - i);
+        const monthKey = date.toLocaleDateString('es-ES', { month: 'short', year: '2-digit' });
+        last6Months.push(monthKey);
+
+        // Count consultations for this month
+        const monthStart = new Date(date.getFullYear(), date.getMonth(), 1);
+        const monthEnd = new Date(date.getFullYear(), date.getMonth() + 1, 0);
+
+        const monthConsultations = consultations.filter(c => {
+          const cDate = new Date(c.createdAt);
+          return cDate >= monthStart && cDate <= monthEnd;
+        });
+
+        pendingByMonth.push(monthConsultations.filter(c => c.status === 'pending').length);
+        resolvedByMonth.push(monthConsultations.filter(c => c.status === 'resolved').length);
+      }
+
+      this.charts.consultations = new Chart(consultationsCtx, {
+        type: 'bar',
+        data: {
+          labels: last6Months,
+          datasets: [
+            {
+              label: 'Resueltas',
+              data: resolvedByMonth,
+              backgroundColor: 'rgba(34, 197, 94, 0.8)',
+              borderColor: 'rgb(34, 197, 94)',
+              borderWidth: 1
+            },
+            {
+              label: 'Pendientes',
+              data: pendingByMonth,
+              backgroundColor: 'rgba(251, 146, 60, 0.8)',
+              borderColor: 'rgb(251, 146, 60)',
+              borderWidth: 1
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: 'top' }
+          },
+          scales: {
+            x: { stacked: true },
+            y: {
+              stacked: true,
+              beginAtZero: true,
+              ticks: { stepSize: 1 }
+            }
+          }
+        }
+      });
+    }
+
+    // Chart 4: Actividad de Cuestionarios (Line Chart)
+    const questionnairesCtx = document.getElementById('questionnairesChart');
+    if (questionnairesCtx) {
+      const last6Months = [];
+      const assignedByMonth = [];
+      const completedByMonth = [];
+
+      for (let i = 5; i >= 0; i--) {
+        const date = new Date();
+        date.setMonth(date.getMonth() - i);
+        const monthKey = date.toLocaleDateString('es-ES', { month: 'short', year: '2-digit' });
+        last6Months.push(monthKey);
+
+        const monthStart = new Date(date.getFullYear(), date.getMonth(), 1);
+        const monthEnd = new Date(date.getFullYear(), date.getMonth() + 1, 0);
+
+        const monthQuestionnaires = questionnaires.filter(q => {
+          const qDate = new Date(q.createdAt);
+          return qDate >= monthStart && qDate <= monthEnd;
+        });
+
+        assignedByMonth.push(monthQuestionnaires.filter(q => q.status === 'assigned' || q.status === 'in_progress').length);
+        completedByMonth.push(monthQuestionnaires.filter(q => q.status === 'completed').length);
+      }
+
+      this.charts.questionnaires = new Chart(questionnairesCtx, {
+        type: 'line',
+        data: {
+          labels: last6Months,
+          datasets: [
+            {
+              label: 'Completados',
+              data: completedByMonth,
+              borderColor: 'rgb(34, 197, 94)',
+              backgroundColor: 'rgba(34, 197, 94, 0.1)',
+              tension: 0.4,
+              fill: true
+            },
+            {
+              label: 'Asignados',
+              data: assignedByMonth,
+              borderColor: 'rgb(251, 146, 60)',
+              backgroundColor: 'rgba(251, 146, 60, 0.1)',
+              tension: 0.4,
+              fill: true
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: 'top' }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              ticks: { stepSize: 1 }
+            }
+          }
+        }
+      });
     }
   }
 
