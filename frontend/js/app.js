@@ -19,7 +19,7 @@ class FarmaFollowApp {
 
   async init() {
     logger.log('Inicializando aplicación...');
-    
+
     const token = localStorage.getItem('token');
     if (token) {
       try {
@@ -27,8 +27,12 @@ class FarmaFollowApp {
         if (this.user.role === 'admin') {
           this.showScreen('admin-dashboard');
         } else {
-          this.showScreen('dashboard');
-          this.startReminderChecker();
+          // Verificar cuestionarios pendientes ANTES de mostrar dashboard
+          const hasPending = await this.checkPendingQuestionnaires();
+          if (!hasPending) {
+            this.showScreen('dashboard');
+            this.startReminderChecker();
+          }
         }
       } catch (error) {
         logger.error('Error verificando autenticación:', error);
@@ -371,12 +375,16 @@ class FarmaFollowApp {
     try {
       const response = await api.login(email, password);
       this.user = response.user;
-      
+
       if (this.user.role === 'admin') {
         this.showScreen('admin-dashboard');
       } else {
-        this.showScreen('dashboard');
-        this.startReminderChecker();
+        // Verificar cuestionarios pendientes ANTES de mostrar dashboard
+        const hasPending = await this.checkPendingQuestionnaires();
+        if (!hasPending) {
+          this.showScreen('dashboard');
+          this.startReminderChecker();
+        }
       }
     } catch (error) {
       this.showMessage('Error: ' + error.message, 'error');
@@ -2263,12 +2271,24 @@ class FarmaFollowApp {
   }
 
   async assignQuestionnaireModal(questionnaireId) {
-    const patients = await api.getUsers();
+    const [patients, medications] = await Promise.all([
+      api.getUsers(),
+      api.getMedications()
+    ]);
+
+    // Obtener enfermedades únicas
+    const allDiseases = new Set();
+    patients.forEach(p => {
+      if (p.diseases && Array.isArray(p.diseases)) {
+        p.diseases.forEach(d => allDiseases.add(d));
+      }
+    });
+    const diseases = Array.from(allDiseases).sort();
 
     const modal = document.createElement('div');
     modal.className = 'modal active';
     modal.innerHTML = `
-      <div class="modal-content">
+      <div class="modal-content" style="max-width: 600px;">
         <div class="modal-header">
           <h2>📤 Asignar Cuestionario</h2>
           <button class="close-btn" onclick="this.closest('.modal').remove()">×</button>
@@ -2276,17 +2296,65 @@ class FarmaFollowApp {
 
         <form id="assignQuestionnaireForm">
           <div class="form-group">
-            <label class="form-label">Selecciona Pacientes</label>
-            <select id="selectedPatients" class="form-select" multiple style="min-height: 200px;" required>
-              ${patients.map(p => `
-                <option value="${p._id}">${p.name} - ${p.email}</option>
-              `).join('')}
+            <label class="form-label">Tipo de Asignación</label>
+            <select id="assignmentType" class="form-select" onchange="app.changeAssignmentType()">
+              <option value="specific">Pacientes Específicos</option>
+              <option value="medication">Todos con un Tratamiento</option>
+              <option value="disease">Todos con una Enfermedad</option>
+              <option value="all">Todos los Pacientes</option>
             </select>
-            <small style="color: var(--gray-600);">Mantén Ctrl (Cmd en Mac) para seleccionar múltiples</small>
+          </div>
+
+          <!-- Pacientes específicos -->
+          <div id="specificPatientsSection" class="assignment-section">
+            <div class="form-group">
+              <label class="form-label">Selecciona Pacientes</label>
+              <select id="selectedPatients" class="form-select" multiple style="min-height: 200px;">
+                ${patients.map(p => `
+                  <option value="${p._id}">${p.name} - ${p.email}</option>
+                `).join('')}
+              </select>
+              <small style="color: var(--gray-600);">Mantén Ctrl (Cmd en Mac) para seleccionar múltiples</small>
+            </div>
+          </div>
+
+          <!-- Por medicamento -->
+          <div id="medicationSection" class="assignment-section hidden">
+            <div class="form-group">
+              <label class="form-label">Selecciona Medicamento/Tratamiento</label>
+              <select id="selectedMedication" class="form-select">
+                <option value="">Seleccionar...</option>
+                ${medications.map(m => `
+                  <option value="${m._id}">${m.name}</option>
+                `).join('')}
+              </select>
+              <p id="medicationPatientsCount" style="margin-top: 0.5rem; color: var(--gray-600); font-size: 0.875rem;"></p>
+            </div>
+          </div>
+
+          <!-- Por enfermedad -->
+          <div id="diseaseSection" class="assignment-section hidden">
+            <div class="form-group">
+              <label class="form-label">Selecciona Enfermedad</label>
+              <select id="selectedDisease" class="form-select">
+                <option value="">Seleccionar...</option>
+                ${diseases.map(d => `
+                  <option value="${d}">${d}</option>
+                `).join('')}
+              </select>
+              <p id="diseasePatientsCount" style="margin-top: 0.5rem; color: var(--gray-600); font-size: 0.875rem;"></p>
+            </div>
+          </div>
+
+          <!-- Todos los pacientes -->
+          <div id="allPatientsSection" class="assignment-section hidden">
+            <div style="padding: 1rem; background: var(--warning); color: white; border-radius: 0.5rem;">
+              <p style="margin: 0;">⚠️ Se asignará el cuestionario a <strong>TODOS los ${patients.length} pacientes</strong></p>
+            </div>
           </div>
 
           <div class="modal-actions">
-            <button type="submit" class="btn btn-success">Asignar</button>
+            <button type="submit" class="btn btn-success">📤 Asignar Cuestionario</button>
             <button type="button" class="btn btn-secondary" onclick="this.closest('.modal').remove()">Cancelar</button>
           </div>
         </form>
@@ -2295,25 +2363,106 @@ class FarmaFollowApp {
 
     document.body.appendChild(modal);
 
-    document.getElementById('assignQuestionnaireForm').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const select = document.getElementById('selectedPatients');
-      const patientIds = Array.from(select.selectedOptions).map(opt => opt.value);
-
-      if (patientIds.length === 0) {
-        this.showMessage('Selecciona al menos un paciente', 'warning');
-        return;
-      }
-
-      try {
-        const result = await api.assignQuestionnaire(questionnaireId, patientIds);
-        this.showMessage(`✅ Cuestionario asignado a ${result.assigned} paciente(s)`, 'success');
-        document.querySelectorAll('.modal').forEach(m => m.remove());
-        this.showAdminSection('questionnaires');
-      } catch (error) {
-        this.showMessage('Error asignando cuestionario: ' + error.message, 'error');
+    // Event listeners
+    document.getElementById('selectedMedication').addEventListener('change', async (e) => {
+      const medicationId = e.target.value;
+      if (medicationId) {
+        const medication = await api.getMedication(medicationId);
+        const count = medication.patients ? medication.patients.length : 0;
+        document.getElementById('medicationPatientsCount').textContent =
+          `Se asignará a ${count} paciente(s) con este tratamiento`;
       }
     });
+
+    document.getElementById('selectedDisease').addEventListener('change', (e) => {
+      const disease = e.target.value;
+      if (disease) {
+        const count = patients.filter(p => p.diseases && p.diseases.includes(disease)).length;
+        document.getElementById('diseasePatientsCount').textContent =
+          `Se asignará a ${count} paciente(s) con esta enfermedad`;
+      }
+    });
+
+    document.getElementById('assignQuestionnaireForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      await this.processQuestionnaireAssignment(questionnaireId, patients);
+    });
+  }
+
+  changeAssignmentType() {
+    const type = document.getElementById('assignmentType').value;
+
+    // Ocultar todas las secciones
+    document.querySelectorAll('.assignment-section').forEach(s => s.classList.add('hidden'));
+
+    // Mostrar la sección correspondiente
+    const sections = {
+      'specific': 'specificPatientsSection',
+      'medication': 'medicationSection',
+      'disease': 'diseaseSection',
+      'all': 'allPatientsSection'
+    };
+
+    document.getElementById(sections[type]).classList.remove('hidden');
+  }
+
+  async processQuestionnaireAssignment(questionnaireId, allPatients) {
+    const type = document.getElementById('assignmentType').value;
+    let patientIds = [];
+
+    try {
+      switch(type) {
+        case 'specific':
+          const select = document.getElementById('selectedPatients');
+          patientIds = Array.from(select.selectedOptions).map(opt => opt.value);
+          if (patientIds.length === 0) {
+            this.showMessage('Selecciona al menos un paciente', 'warning');
+            return;
+          }
+          break;
+
+        case 'medication':
+          const medicationId = document.getElementById('selectedMedication').value;
+          if (!medicationId) {
+            this.showMessage('Selecciona un medicamento', 'warning');
+            return;
+          }
+          const medication = await api.getMedication(medicationId);
+          patientIds = medication.patients || [];
+          if (patientIds.length === 0) {
+            this.showMessage('No hay pacientes con este medicamento', 'warning');
+            return;
+          }
+          break;
+
+        case 'disease':
+          const disease = document.getElementById('selectedDisease').value;
+          if (!disease) {
+            this.showMessage('Selecciona una enfermedad', 'warning');
+            return;
+          }
+          patientIds = allPatients
+            .filter(p => p.diseases && p.diseases.includes(disease))
+            .map(p => p._id);
+          if (patientIds.length === 0) {
+            this.showMessage('No hay pacientes con esta enfermedad', 'warning');
+            return;
+          }
+          break;
+
+        case 'all':
+          patientIds = allPatients.map(p => p._id);
+          break;
+      }
+
+      const result = await api.assignQuestionnaire(questionnaireId, patientIds);
+      this.showMessage(`✅ Cuestionario asignado a ${result.assigned} paciente(s)`, 'success');
+      document.querySelectorAll('.modal').forEach(m => m.remove());
+      this.showAdminSection('questionnaires');
+
+    } catch (error) {
+      this.showMessage('Error asignando cuestionario: ' + error.message, 'error');
+    }
   }
 
   async activateQuestionnaire(questionnaireId) {
@@ -2865,6 +3014,305 @@ class FarmaFollowApp {
   async compareRecords(recordId) {
     // Implementar comparación de registros
     this.showMessage('Comparación de registros en desarrollo', 'info');
+  }
+
+  // ===== SISTEMA DE CUESTIONARIOS PENDIENTES =====
+
+  async checkPendingQuestionnaires() {
+    try {
+      const questionnaires = await api.getMyQuestionnaires();
+
+      // Filtrar solo los que están pendientes (asignados pero no completados)
+      const pending = questionnaires.filter(q => q.status === 'assigned' || q.status === 'in_progress');
+
+      if (pending.length > 0) {
+        // Hay cuestionarios pendientes, mostrar alerta
+        this.showQuestionnaireAlert(pending);
+        return true; // Indica que hay pendientes
+      }
+
+      return false; // No hay pendientes
+    } catch (error) {
+      logger.error('Error verificando cuestionarios pendientes:', error);
+      return false; // En caso de error, continuar normal
+    }
+  }
+
+  showQuestionnaireAlert(pendingQuestionnaires) {
+    const container = document.getElementById('app');
+    const firstQuestionnaire = pendingQuestionnaires[0];
+
+    container.innerHTML = `
+      <div class="questionnaire-alert-screen">
+        <div class="questionnaire-alert-card">
+          <div class="alert-icon">📋</div>
+
+          <h1 class="alert-title">¡Tienes ${pendingQuestionnaires.length} cuestionario(s) pendiente(s)!</h1>
+
+          <p class="alert-description">
+            Tu equipo médico ha solicitado que completes el siguiente cuestionario para hacer un mejor seguimiento de tu tratamiento.
+          </p>
+
+          <div class="alert-questionnaire-info">
+            <h3>${firstQuestionnaire.questionnaire?.title || 'Cuestionario'}</h3>
+            <p style="color: var(--gray-600); margin-top: 0.5rem;">
+              ${firstQuestionnaire.questionnaire?.description || 'Cuestionario de seguimiento'}
+            </p>
+            <div style="display: flex; align-items: center; gap: 0.5rem; margin-top: 1rem; color: var(--gray-600);">
+              <span>📝 ${firstQuestionnaire.questionnaire?.questions?.length || 0} preguntas</span>
+              <span>•</span>
+              <span>⏱️ Tiempo estimado: 5-10 minutos</span>
+            </div>
+          </div>
+
+          <div class="alert-actions">
+            <button class="btn btn-primary btn-large" onclick="app.startPendingQuestionnaire('${firstQuestionnaire._id}')">
+              ✅ Completar Ahora
+            </button>
+            ${pendingQuestionnaires.length > 1 ? `
+              <p style="margin-top: 1rem; font-size: 0.875rem; color: var(--gray-600);">
+                Tienes ${pendingQuestionnaires.length - 1} cuestionario(s) más después de este
+              </p>
+            ` : ''}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  async startPendingQuestionnaire(responseId) {
+    try {
+      // Obtener el cuestionario completo
+      const response = await api.startQuestionnaire(responseId);
+      this.currentQuestionnaireResponse = response;
+
+      // Mostrar cuestionario en página completa
+      this.showQuestionnaireFullPage(response);
+
+    } catch (error) {
+      this.showMessage('Error cargando cuestionario: ' + error.message, 'error');
+      // Si hay error, permitir acceso al dashboard
+      this.showScreen('dashboard');
+      this.startReminderChecker();
+    }
+  }
+
+  showQuestionnaireFullPage(response) {
+    const container = document.getElementById('app');
+    const questionnaire = response.questionnaire;
+    const questions = questionnaire.questions || [];
+
+    container.innerHTML = `
+      <div class="questionnaire-full-page">
+        <div class="questionnaire-header">
+          <div class="questionnaire-progress">
+            <div class="progress-bar">
+              <div class="progress-fill" id="questionnaireProgress" style="width: 0%"></div>
+            </div>
+            <span id="progressText">0 de ${questions.length} respondidas</span>
+          </div>
+        </div>
+
+        <div class="questionnaire-container">
+          <div class="questionnaire-title-section">
+            <h1>${questionnaire.title}</h1>
+            <p style="color: var(--gray-600); margin-top: 0.5rem;">
+              ${questionnaire.description}
+            </p>
+          </div>
+
+          <form id="questionnaireFullForm" class="questionnaire-form">
+            ${questions.map((q, index) => this.renderQuestionField(q, index)).join('')}
+
+            <div class="questionnaire-actions" style="margin-top: 2rem; padding-top: 2rem; border-top: 2px solid var(--gray-200);">
+              <button type="submit" class="btn btn-primary btn-large">
+                📤 Enviar Cuestionario
+              </button>
+              <p style="margin-top: 1rem; font-size: 0.875rem; color: var(--gray-600); text-align: center;">
+                Por favor, revisa todas tus respuestas antes de enviar
+              </p>
+            </div>
+          </form>
+        </div>
+      </div>
+    `;
+
+    // Event listeners para actualizar el progreso
+    const form = document.getElementById('questionnaireFullForm');
+    const inputs = form.querySelectorAll('input, select, textarea');
+
+    inputs.forEach(input => {
+      input.addEventListener('change', () => this.updateQuestionnaireProgress(questions.length));
+    });
+
+    // Submit del formulario
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      await this.submitQuestionnaireResponse(response._id, questions);
+    });
+  }
+
+  renderQuestionField(question, index) {
+    const baseHTML = `
+      <div class="question-item" data-question-index="${index}">
+        <label class="question-label">
+          <span class="question-number">${index + 1}.</span>
+          ${question.question}
+          ${question.required ? '<span style="color: var(--danger);">*</span>' : ''}
+        </label>
+    `;
+
+    let inputHTML = '';
+
+    switch(question.type) {
+      case 'text':
+        inputHTML = `<input type="text" name="question_${index}" class="form-input" ${question.required ? 'required' : ''} placeholder="Tu respuesta...">`;
+        break;
+
+      case 'number':
+        inputHTML = `<input type="number" name="question_${index}" class="form-input" ${question.required ? 'required' : ''} placeholder="Número...">`;
+        break;
+
+      case 'multiple':
+        inputHTML = `
+          <select name="question_${index}" class="form-select" ${question.required ? 'required' : ''}>
+            <option value="">Selecciona una opción...</option>
+            ${(question.options || []).map(opt => `
+              <option value="${opt}">${opt}</option>
+            `).join('')}
+          </select>
+        `;
+        break;
+
+      case 'scale':
+        const min = question.scaleMin || 0;
+        const max = question.scaleMax || 10;
+        inputHTML = `
+          <div class="scale-input">
+            <input type="range" name="question_${index}" class="form-range"
+              min="${min}" max="${max}" value="${min}"
+              oninput="document.getElementById('scale_value_${index}').textContent = this.value"
+              ${question.required ? 'required' : ''}>
+            <div class="scale-labels">
+              <span>${min}</span>
+              <span id="scale_value_${index}">${min}</span>
+              <span>${max}</span>
+            </div>
+          </div>
+        `;
+        break;
+
+      case 'yesno':
+        inputHTML = `
+          <div class="radio-group">
+            <label class="radio-label">
+              <input type="radio" name="question_${index}" value="Sí" ${question.required ? 'required' : ''}>
+              <span>Sí</span>
+            </label>
+            <label class="radio-label">
+              <input type="radio" name="question_${index}" value="No" ${question.required ? 'required' : ''}>
+              <span>No</span>
+            </label>
+          </div>
+        `;
+        break;
+
+      case 'date':
+        inputHTML = `<input type="date" name="question_${index}" class="form-input" ${question.required ? 'required' : ''}>`;
+        break;
+
+      default:
+        inputHTML = `<textarea name="question_${index}" class="form-textarea" rows="3" ${question.required ? 'required' : ''} placeholder="Tu respuesta..."></textarea>`;
+    }
+
+    return baseHTML + inputHTML + '</div>';
+  }
+
+  updateQuestionnaireProgress(totalQuestions) {
+    const form = document.getElementById('questionnaireFullForm');
+    const questions = form.querySelectorAll('.question-item');
+    let answered = 0;
+
+    questions.forEach(questionDiv => {
+      const inputs = questionDiv.querySelectorAll('input, select, textarea');
+      let hasValue = false;
+
+      inputs.forEach(input => {
+        if (input.type === 'radio') {
+          const radioGroup = form.querySelectorAll(`input[name="${input.name}"]`);
+          hasValue = Array.from(radioGroup).some(r => r.checked);
+        } else {
+          hasValue = input.value && input.value.trim() !== '';
+        }
+      });
+
+      if (hasValue) answered++;
+    });
+
+    const percentage = (answered / totalQuestions) * 100;
+    document.getElementById('questionnaireProgress').style.width = `${percentage}%`;
+    document.getElementById('progressText').textContent = `${answered} de ${totalQuestions} respondidas`;
+  }
+
+  async submitQuestionnaireResponse(responseId, questions) {
+    const form = document.getElementById('questionnaireFullForm');
+    const responses = [];
+
+    questions.forEach((q, index) => {
+      const input = form.querySelector(`[name="question_${index}"]`);
+      let answer = '';
+
+      if (input.type === 'radio') {
+        const checked = form.querySelector(`[name="question_${index}"]:checked`);
+        answer = checked ? checked.value : '';
+      } else {
+        answer = input.value;
+      }
+
+      responses.push({
+        question: q.question,
+        answer: answer,
+        questionType: q.type
+      });
+    });
+
+    try {
+      await api.submitQuestionnaire(responseId, responses);
+
+      // Mostrar mensaje de éxito
+      this.showSuccessScreen();
+
+      // Después de 2 segundos, verificar si hay más cuestionarios pendientes
+      setTimeout(async () => {
+        const hasPending = await this.checkPendingQuestionnaires();
+        if (!hasPending) {
+          // No hay más pendientes, ir al dashboard
+          this.showScreen('dashboard');
+          this.startReminderChecker();
+        }
+      }, 2000);
+
+    } catch (error) {
+      this.showMessage('Error enviando cuestionario: ' + error.message, 'error');
+    }
+  }
+
+  showSuccessScreen() {
+    const container = document.getElementById('app');
+    container.innerHTML = `
+      <div class="questionnaire-alert-screen">
+        <div class="questionnaire-alert-card">
+          <div class="alert-icon" style="background: var(--success);">✅</div>
+          <h1 class="alert-title">¡Cuestionario Completado!</h1>
+          <p class="alert-description">
+            Gracias por completar el cuestionario. Tus respuestas han sido enviadas correctamente y ayudarán a tu equipo médico a realizar un mejor seguimiento de tu tratamiento.
+          </p>
+          <div style="text-align: center; margin-top: 1.5rem; color: var(--gray-600);">
+            <p>Redirigiendo al dashboard...</p>
+          </div>
+        </div>
+      </div>
+    `;
   }
 }
 
