@@ -3131,3 +3131,33 @@ body.dark-mode .search-result-item:hover {
 body.dark-mode .search-result-title {
   color: #f1f5f9;
 }
+
+/* Clickable Cards */
+.clickable-card {
+  cursor: pointer;
+  position: relative;
+}
+
+.clickable-card::after {
+  content: '👁️ Ver gráfico';
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  font-size: 0.6875rem;
+  color: var(--primary);
+  opacity: 0;
+  transition: opacity 0.2s;
+  font-weight: 500;
+}
+
+.clickable-card:hover::after {
+  opacity: 1;
+}
+
+.clickable-card:hover {
+  border-color: var(--primary) !important;
+}
+
+body.dark-mode .clickable-card::after {
+  color: var(--primary-light);
+}
