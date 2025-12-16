@@ -1008,7 +1008,7 @@ class FarmaFollowApp {
 
         <div class="admin-stats">
           <!-- Total Pacientes Card -->
-          <div class="stat-card-enhanced">
+          <div class="stat-card-enhanced clickable-card" onclick="app.showAdminChart('adherence')" title="Click para ver gráfico de adherencia">
             <div class="stat-card-content">
               <div class="stat-icon-enhanced">👥</div>
               <div class="stat-details">
@@ -1020,7 +1020,7 @@ class FarmaFollowApp {
                 </div>
               </div>
             </div>
-            <div class="stat-actions">
+            <div class="stat-actions" onclick="event.stopPropagation()">
               <button class="stat-action-btn" onclick="app.showAdminSection('patients')">
                 Ver todos
               </button>
@@ -1053,7 +1053,7 @@ class FarmaFollowApp {
           </div>
 
           <!-- Consultas Pendientes Card -->
-          <div class="stat-card-enhanced" style="border-left: 4px solid var(--warning);">
+          <div class="stat-card-enhanced clickable-card" style="border-left: 4px solid var(--warning);" onclick="app.showAdminChart('consultations')" title="Click para ver gráfico de consultas">
             <div class="stat-card-content">
               <div class="stat-icon-enhanced" style="background: var(--warning-light);">💬</div>
               <div class="stat-details">
@@ -1066,7 +1066,7 @@ class FarmaFollowApp {
                 </div>
               </div>
             </div>
-            <div class="stat-actions">
+            <div class="stat-actions" onclick="event.stopPropagation()">
               <button class="stat-action-btn" onclick="app.quickActionPendingConsultations()">
                 Responder
               </button>
@@ -1077,7 +1077,7 @@ class FarmaFollowApp {
           </div>
 
           <!-- Adherencia Media Card -->
-          <div class="stat-card-enhanced" style="border-left: 4px solid var(--cyan);">
+          <div class="stat-card-enhanced clickable-card" style="border-left: 4px solid var(--cyan);" onclick="app.showAdminChart('adherence')" title="Click para ver gráfico de adherencia">
             <div class="stat-card-content">
               <div class="stat-icon-enhanced" style="background: var(--cyan-light);">📈</div>
               <div class="stat-details">
@@ -1088,7 +1088,7 @@ class FarmaFollowApp {
                 </div>
               </div>
             </div>
-            <div class="stat-actions">
+            <div class="stat-actions" onclick="event.stopPropagation()">
               <button class="stat-action-btn" onclick="app.quickActionLowAdherence()">
                 Ver baja adherencia
               </button>
@@ -1099,7 +1099,7 @@ class FarmaFollowApp {
           </div>
 
           <!-- Cuestionarios Card -->
-          <div class="stat-card-enhanced" style="border-left: 4px solid #8b5cf6;">
+          <div class="stat-card-enhanced clickable-card" style="border-left: 4px solid #8b5cf6;" onclick="app.showAdminChart('questionnaires')" title="Click para ver gráfico de cuestionarios">
             <div class="stat-card-content">
               <div class="stat-icon-enhanced" style="background: rgba(139, 92, 246, 0.1);">📋</div>
               <div class="stat-details">
@@ -1112,7 +1112,7 @@ class FarmaFollowApp {
                 </div>
               </div>
             </div>
-            <div class="stat-actions">
+            <div class="stat-actions" onclick="event.stopPropagation()">
               <button class="stat-action-btn" onclick="app.showAdminSection('questionnaires')">
                 Gestionar
               </button>
@@ -1170,41 +1170,14 @@ class FarmaFollowApp {
           </div>
         </div>
 
-        <!-- Charts Section -->
-        <div class="charts-grid" style="margin-top: 2rem;">
-          <div class="chart-container">
-            <h3 class="chart-title">📊 Adherencia en el Tiempo</h3>
-            <canvas id="adherenceChart"></canvas>
-          </div>
-          <div class="chart-container">
-            <h3 class="chart-title">🎯 Distribución de Enfermedades</h3>
-            <canvas id="diseasesChart"></canvas>
-          </div>
-          <div class="chart-container">
-            <h3 class="chart-title">💬 Evolución de Consultas</h3>
-            <canvas id="consultationsChart"></canvas>
-          </div>
-          <div class="chart-container">
-            <h3 class="chart-title">📋 Actividad de Cuestionarios</h3>
-            <canvas id="questionnairesChart"></canvas>
-          </div>
-        </div>
+        <!-- Charts will be shown here when clicking on cards -->
+        <div id="adminChartsContainer" style="margin-top: 2rem; display: none;"></div>
 
-        <!-- Floating Action Buttons -->
-        <div class="fab-container">
-          <button class="fab" onclick="app.showCalendarView()" title="📅 Ver Calendario">
-            📅
-          </button>
-          <button class="fab" onclick="app.showComparativeAnalysis()" title="📊 Análisis Comparativo">
-            📊
-          </button>
-        </div>
-
+        <!-- Detail sections will be shown here -->
         <div id="adminSectionContainer" style="margin-top: 2rem;"></div>
       `;
 
-      // Initialize charts after DOM is ready
-      setTimeout(() => this.initDashboardCharts(users, consultations, questionnaires), 100);
+      // Don't initialize charts automatically - they'll be shown on demand
 
     } catch (error) {
       logger.error('Error cargando admin dashboard:', error);
@@ -1460,28 +1433,118 @@ class FarmaFollowApp {
   }
 
   async showAdminSection(section) {
-    const container = document.getElementById('adminSectionContainer');
+    // Hide the dashboard and show the detail view full-screen
+    const app = document.getElementById('app');
+    const container = document.createElement('div');
+    container.className = 'admin-detail-view';
+
+    // Back button header
+    const header = `
+      <div style="background: white; border-bottom: 1px solid var(--gray-200); padding: 1rem 2rem; margin-bottom: 2rem;">
+        <button class="btn btn-secondary" onclick="app.showView('admin')" style="margin-right: 1rem;">
+          ← Volver al Dashboard
+        </button>
+      </div>
+    `;
 
     switch(section) {
       case 'patients':
-        await this.renderPatients(container);
+        app.innerHTML = header;
+        await this.renderPatients(app);
         break;
       case 'medications':
-        await this.renderMedications(container);
+        app.innerHTML = header;
+        await this.renderMedications(app);
         break;
       case 'consultations':
-        await this.renderConsultations(container);
+        app.innerHTML = header;
+        await this.renderConsultations(app);
         break;
       case 'questionnaires':
-        await this.renderQuestionnaires(container);
+        app.innerHTML = header;
+        await this.renderQuestionnaires(app);
         break;
       case 'studies':
-        await this.renderStudies(container);
+        app.innerHTML = header;
+        await this.renderStudies(app);
         break;
       case 'consents':
         await this.showConsentManagement();
         break;
     }
+  }
+
+  // Show specific chart views when clicking on cards
+  async showAdminChart(chartType) {
+    const app = document.getElementById('app');
+    const users = this.users || await api.getUsers();
+    const consultations = this.consultations || await api.getAllConsultations();
+    const questionnaires = this.questionnaires || await api.getAllQuestionnaires().catch(() => []);
+
+    const header = `
+      <div style="background: white; border-bottom: 1px solid var(--gray-200); padding: 1rem 2rem; margin-bottom: 2rem;">
+        <button class="btn btn-secondary" onclick="app.showView('admin')">
+          ← Volver al Dashboard
+        </button>
+      </div>
+    `;
+
+    let chartHTML = '';
+    let chartTitle = '';
+
+    switch(chartType) {
+      case 'adherence':
+        chartTitle = '📊 Adherencia en el Tiempo';
+        chartHTML = `
+          <div style="background: white; border: 1px solid var(--gray-200); border-radius: 0.5rem; padding: 2rem; max-width: 1000px; margin: 0 auto;">
+            <h2 style="margin-bottom: 2rem;">${chartTitle}</h2>
+            <div style="height: 400px; position: relative;">
+              <canvas id="adherenceChart"></canvas>
+            </div>
+          </div>
+        `;
+        break;
+      case 'diseases':
+        chartTitle = '🎯 Distribución de Enfermedades';
+        chartHTML = `
+          <div style="background: white; border: 1px solid var(--gray-200); border-radius: 0.5rem; padding: 2rem; max-width: 1000px; margin: 0 auto;">
+            <h2 style="margin-bottom: 2rem;">${chartTitle}</h2>
+            <div style="height: 400px; position: relative;">
+              <canvas id="diseasesChart"></canvas>
+            </div>
+          </div>
+        `;
+        break;
+      case 'consultations':
+        chartTitle = '💬 Evolución de Consultas';
+        chartHTML = `
+          <div style="background: white; border: 1px solid var(--gray-200); border-radius: 0.5rem; padding: 2rem; max-width: 1000px; margin: 0 auto;">
+            <h2 style="margin-bottom: 2rem;">${chartTitle}</h2>
+            <div style="height: 400px; position: relative;">
+              <canvas id="consultationsChart"></canvas>
+            </div>
+          </div>
+        `;
+        break;
+      case 'questionnaires':
+        chartTitle = '📋 Actividad de Cuestionarios';
+        chartHTML = `
+          <div style="background: white; border: 1px solid var(--gray-200); border-radius: 0.5rem; padding: 2rem; max-width: 1000px; margin: 0 auto;">
+            <h2 style="margin-bottom: 2rem;">${chartTitle}</h2>
+            <div style="height: 400px; position: relative;">
+              <canvas id="questionnairesChart"></canvas>
+            </div>
+          </div>
+        `;
+        break;
+    }
+
+    app.innerHTML = header + chartHTML;
+
+    // Initialize the specific chart
+    setTimeout(() => {
+      this.initDashboardCharts(users, consultations, questionnaires);
+    }, 100);
   }
 
   async renderPatients(container) {
