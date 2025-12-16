@@ -868,17 +868,19 @@ class FarmaFollowApp {
   
   async renderAdminDashboard(container) {
     try {
-      const [users, medications, consultations, questionnaires] = await Promise.all([
+      const [users, medications, consultations, questionnaires, studies] = await Promise.all([
         api.getUsers(),
         api.getMedications(),
         api.getAllConsultations(),
-        api.getAllQuestionnaires().catch(() => [])
+        api.getAllQuestionnaires().catch(() => []),
+        api.getStudies().catch(() => ({ data: [] }))
       ]);
 
       this.users = users;
       this.medications = medications;
       this.consultations = consultations;
       this.questionnaires = questionnaires;
+      this.studies = studies.data || [];
 
       const pendingConsultations = consultations.filter(c => c.status === 'pending').length;
       const resolvedConsultations = consultations.filter(c => c.status === 'resolved').length;
@@ -892,6 +894,11 @@ class FarmaFollowApp {
       // Calculate low adherence count
       const lowAdherenceCount = users.filter(u => (u.adherenceRate || 0) < 60).length;
       const assignedQuestionnaires = questionnaires.filter(q => q.status === 'assigned').length;
+
+      // Estudios RWE stats
+      const activeStudies = this.studies.filter(s => s.status === 'active').length;
+      const draftStudies = this.studies.filter(s => s.status === 'draft').length;
+      const totalCohortSize = this.studies.reduce((sum, s) => sum + (s.stats?.cohortSize || 0), 0);
 
       container.innerHTML = `
         <div class="admin-header">
@@ -1010,6 +1017,29 @@ class FarmaFollowApp {
               </button>
               <button class="stat-action-btn" onclick="app.createQuestionnaire()">
                 + Nuevo
+              </button>
+            </div>
+          </div>
+
+          <!-- Estudios RWE Card - NUEVO -->
+          <div class="stat-card-enhanced" style="border-left: 4px solid #10b981;">
+            <div class="stat-card-content">
+              <div class="stat-icon-enhanced" style="background: rgba(16, 185, 129, 0.1);">🔬</div>
+              <div class="stat-details">
+                <div class="stat-value">${activeStudies}</div>
+                <div class="stat-label">Estudios RWE Activos</div>
+                <div class="stat-mini">
+                  <span style="color: var(--gray-600);">${totalCohortSize} pacientes en cohortes</span>
+                  ${draftStudies > 0 ? `<span style="color: var(--gray-600); font-size: 0.75rem;">· ${draftStudies} borradores</span>` : ''}
+                </div>
+              </div>
+            </div>
+            <div class="stat-actions">
+              <button class="stat-action-btn" onclick="app.showAdminSection('studies')">
+                Ver estudios
+              </button>
+              <button class="stat-action-btn" onclick="app.createStudy()">
+                + Crear estudio
               </button>
             </div>
           </div>
@@ -1319,6 +1349,9 @@ class FarmaFollowApp {
         break;
       case 'questionnaires':
         await this.renderQuestionnaires(container);
+        break;
+      case 'studies':
+        await this.renderStudies(container);
         break;
     }
   }
@@ -4547,6 +4580,646 @@ class FarmaFollowApp {
       if (themeToggle) themeToggle.classList.remove('hidden');
     }
   }
+
+  // ===== ESTUDIOS RWE (REAL WORLD EVIDENCE) =====
+
+  async renderStudies(container) {
+    try {
+      const response = await api.getStudies();
+      const studies = response.data || [];
+
+      const studyTypeColors = {
+        'adherencia': '#3b82f6',
+        'efectividad': '#10b981',
+        'seguridad': '#ef4444',
+        'farmacovigilancia': '#f59e0b',
+        'calidad-vida': '#8b5cf6',
+        'patron-uso': '#06b6d4',
+        'coste-efectividad': '#ec4899',
+        'personalizado': '#6b7280'
+      };
+
+      container.innerHTML = `
+        <div style="background: white; border-radius: 1rem; padding: 1.5rem; box-shadow: var(--shadow);">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+            <h2>🔬 Estudios Real World Evidence</h2>
+            <button class="btn btn-primary" onclick="app.createStudy()">
+              + Crear Estudio RWE
+            </button>
+          </div>
+
+          ${studies.length === 0 ? `
+            <div class="empty-state" style="text-align: center; padding: 3rem; color: var(--gray-600);">
+              <div style="font-size: 4rem; margin-bottom: 1rem;">🔬</div>
+              <h3>No hay estudios creados</h3>
+              <p>Crea tu primer estudio observacional RWE para comenzar</p>
+              <button class="btn btn-primary" onclick="app.createStudy()" style="margin-top: 1rem;">
+                Crear Primer Estudio
+              </button>
+            </div>
+          ` : `
+            <div class="studies-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 1.5rem;">
+              ${studies.map(study => `
+                <div class="study-card" style="border: 2px solid ${studyTypeColors[study.studyType] || '#6b7280'}; border-radius: 0.75rem; padding: 1.25rem; background: white; transition: all 0.2s; cursor: pointer;" onclick="app.viewStudyDetail('${study._id}')">
+                  <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 1rem;">
+                    <div>
+                      <h3 style="margin: 0; font-size: 1.125rem;">${study.title}</h3>
+                      <span class="badge" style="background: ${studyTypeColors[study.studyType] || '#6b7280'}; color: white; margin-top: 0.5rem;">
+                        ${study.studyType.replace(/-/g, ' ')}
+                      </span>
+                    </div>
+                    <span class="badge ${
+                      study.status === 'active' ? 'badge-success' :
+                      study.status === 'draft' ? 'badge-secondary' :
+                      study.status === 'completed' ? 'badge-info' :
+                      'badge-warning'
+                    }">
+                      ${study.status}
+                    </span>
+                  </div>
+
+                  <p style="color: var(--gray-600); font-size: 0.875rem; margin-bottom: 1rem;">
+                    ${study.objective.substring(0, 100)}${study.objective.length > 100 ? '...' : ''}
+                  </p>
+
+                  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; padding-top: 1rem; border-top: 1px solid var(--gray-200);">
+                    <div>
+                      <div style="font-size: 0.75rem; color: var(--gray-500);">Cohorte</div>
+                      <div style="font-weight: 600; color: var(--primary);">${study.stats?.cohortSize || 0} pacientes</div>
+                    </div>
+                    <div>
+                      <div style="font-size: 0.75rem; color: var(--gray-500);">Adherencia Media</div>
+                      <div style="font-weight: 600; color: ${
+                        (study.stats?.averageAdherence || 0) >= 80 ? 'var(--success)' :
+                        (study.stats?.averageAdherence || 0) >= 60 ? 'var(--warning)' :
+                        'var(--danger)'
+                      };">
+                        ${study.stats?.averageAdherence || 0}%
+                      </div>
+                    </div>
+                    <div>
+                      <div style="font-size: 0.75rem; color: var(--gray-500);">Activos</div>
+                      <div style="font-weight: 600;">${study.stats?.activePatients || 0}</div>
+                    </div>
+                    <div>
+                      <div style="font-size: 0.75rem; color: var(--gray-500);">Seguimientos</div>
+                      <div style="font-weight: 600;">${study.stats?.completedFollowUps || 0}/${study.stats?.totalFollowUps || 0}</div>
+                    </div>
+                  </div>
+
+                  ${study.startDate ? `
+                    <div style="margin-top: 0.75rem; font-size: 0.75rem; color: var(--gray-500);">
+                      Inicio: ${new Date(study.startDate).toLocaleDateString('es-ES')}
+                    </div>
+                  ` : ''}
+                </div>
+              `).join('')}
+            </div>
+          `}
+        </div>
+      `;
+    } catch (error) {
+      logger.error('Error loading studies:', error);
+      container.innerHTML = `
+        <div class="error">
+          <h3>Error cargando estudios</h3>
+          <p>${error.message}</p>
+        </div>
+      `;
+    }
+  }
+
+  async createStudy() {
+    // Mostrar wizard de creación de estudio
+    const modal = document.createElement('div');
+    modal.className = 'modal active';
+    modal.innerHTML = `
+      <div class="modal-content" style="max-width: 900px; max-height: 90vh; overflow-y: auto;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+          <h2>🔬 Crear Estudio RWE</h2>
+          <button class="btn btn-text" onclick="this.closest('.modal').remove()">✕</button>
+        </div>
+
+        <div id="studyWizard">
+          <!-- Step Indicator -->
+          <div class="wizard-steps" style="display: flex; justify-content: space-between; margin-bottom: 2rem;">
+            <div class="wizard-step active" data-step="1">
+              <div style="width: 40px; height: 40px; border-radius: 50%; background: var(--primary); color: white; display: flex; align-items: center; justify-content: center; margin: 0 auto 0.5rem;">1</div>
+              <div style="font-size: 0.875rem; text-align: center;">Información Básica</div>
+            </div>
+            <div class="wizard-step" data-step="2">
+              <div style="width: 40px; height: 40px; border-radius: 50%; background: var(--gray-300); color: white; display: flex; align-items: center; justify-content: center; margin: 0 auto 0.5rem;">2</div>
+              <div style="font-size: 0.875rem; text-align: center;">Criterios</div>
+            </div>
+            <div class="wizard-step" data-step="3">
+              <div style="width: 40px; height: 40px; border-radius: 50%; background: var(--gray-300); color: white; display: flex; align-items: center; justify-content: center; margin: 0 auto 0.5rem;">3</div>
+              <div style="font-size: 0.875rem; text-align: center;">Variables</div>
+            </div>
+            <div class="wizard-step" data-step="4">
+              <div style="width: 40px; height: 40px; border-radius: 50%; background: var(--gray-300); color: white; display: flex; align-items: center; justify-content: center; margin: 0 auto 0.5rem;">4</div>
+              <div style="font-size: 0.875rem; text-align: center;">Seguimiento</div>
+            </div>
+          </div>
+
+          <!-- Step 1: Información Básica -->
+          <div class="wizard-content" data-step="1">
+            <div class="form-group">
+              <label class="form-label">Título del Estudio *</label>
+              <input type="text" id="studyTitle" class="form-input" required
+                placeholder="Ej: Adherencia en HTA con ARA-II">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Tipo de Estudio *</label>
+              <select id="studyType" class="form-input" required>
+                <option value="">Seleccionar...</option>
+                <option value="adherencia">Adherencia</option>
+                <option value="efectividad">Efectividad</option>
+                <option value="seguridad">Seguridad</option>
+                <option value="farmacovigilancia">Farmacovigilancia</option>
+                <option value="calidad-vida">Calidad de Vida</option>
+                <option value="patron-uso">Patrón de Uso</option>
+                <option value="coste-efectividad">Coste-Efectividad</option>
+                <option value="personalizado">Personalizado</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Objetivo del Estudio *</label>
+              <textarea id="studyObjective" class="form-input" rows="3" required
+                placeholder="Ej: Evaluar la adherencia y efectividad de tratamientos con ARA-II en pacientes con hipertensión arterial mayores de 65 años"></textarea>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Descripción</label>
+              <textarea id="studyDescription" class="form-input" rows="4"
+                placeholder="Descripción detallada del estudio..."></textarea>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Duración Planificada (meses) *</label>
+              <input type="number" id="studyDuration" class="form-input" value="12" min="1" required>
+            </div>
+          </div>
+
+          <!-- Step 2: Criterios (se implementará completo más adelante) -->
+          <div class="wizard-content" data-step="2" style="display: none;">
+            <h3>Criterios de Inclusión</h3>
+            <div class="form-group">
+              <label class="form-label">Edad (años)</label>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                <input type="number" id="ageMin" class="form-input" placeholder="Mínima">
+                <input type="number" id="ageMax" class="form-input" placeholder="Máxima">
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Género</label>
+              <select id="gender" class="form-input">
+                <option value="todos">Todos</option>
+                <option value="masculino">Masculino</option>
+                <option value="femenino">Femenino</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Enfermedades (separadas por comas)</label>
+              <input type="text" id="diseases" class="form-input"
+                placeholder="Ej: hipertensión, diabetes">
+            </div>
+          </div>
+
+          <!-- Step 3: Variables (simplificado) -->
+          <div class="wizard-content" data-step="3" style="display: none;">
+            <h3>Variables a Recoger</h3>
+            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem;">
+              <label style="display: flex; align-items: center; gap: 0.5rem;">
+                <input type="checkbox" checked> Adherencia
+              </label>
+              <label style="display: flex; align-items: center; gap: 0.5rem;">
+                <input type="checkbox" checked> Eventos Adversos
+              </label>
+              <label style="display: flex; align-items: center; gap: 0.5rem;">
+                <input type="checkbox" checked> Parámetros Clínicos
+              </label>
+              <label style="display: flex; align-items: center; gap: 0.5rem;">
+                <input type="checkbox"> PROs (Calidad de Vida)
+              </label>
+            </div>
+          </div>
+
+          <!-- Step 4: Seguimiento -->
+          <div class="wizard-content" data-step="4" style="display: none;">
+            <div class="form-group">
+              <label class="form-label">Puntos de Seguimiento (meses)</label>
+              <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                <label style="display: flex; align-items: center; gap: 0.5rem;">
+                  <input type="checkbox" value="1" checked> 1 mes
+                </label>
+                <label style="display: flex; align-items: center; gap: 0.5rem;">
+                  <input type="checkbox" value="3" checked> 3 meses
+                </label>
+                <label style="display: flex; align-items: center; gap: 0.5rem;">
+                  <input type="checkbox" value="6" checked> 6 meses
+                </label>
+                <label style="display: flex; align-items: center; gap: 0.5rem;">
+                  <input type="checkbox" value="12"> 12 meses
+                </label>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Tamaño Objetivo de Cohorte (opcional)</label>
+              <input type="number" id="targetCohortSize" class="form-input"
+                placeholder="Dejar vacío para sin límite">
+            </div>
+          </div>
+
+          <!-- Navigation Buttons -->
+          <div style="display: flex; justify-content: space-between; margin-top: 2rem; padding-top: 2rem; border-top: 1px solid var(--gray-200);">
+            <button class="btn btn-secondary" id="prevBtn" onclick="app.wizardPrev()" style="display: none;">
+              ← Anterior
+            </button>
+            <div></div>
+            <div style="display: flex; gap: 0.5rem;">
+              <button class="btn btn-secondary" onclick="this.closest('.modal').remove()">
+                Cancelar
+              </button>
+              <button class="btn btn-primary" id="nextBtn" onclick="app.wizardNext()">
+                Siguiente →
+              </button>
+              <button class="btn btn-primary" id="submitBtn" onclick="app.submitStudy()" style="display: none;">
+                Crear Estudio
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+    this.currentWizardStep = 1;
+  }
+
+  wizardNext() {
+    if (this.currentWizardStep < 4) {
+      this.currentWizardStep++;
+      this.updateWizardStep();
+    }
+  }
+
+  wizardPrev() {
+    if (this.currentWizardStep > 1) {
+      this.currentWizardStep--;
+      this.updateWizardStep();
+    }
+  }
+
+  updateWizardStep() {
+    // Update step indicators
+    document.querySelectorAll('.wizard-step').forEach(step => {
+      const stepNum = parseInt(step.dataset.step);
+      step.classList.toggle('active', stepNum === this.currentWizardStep);
+
+      const circle = step.querySelector('div');
+      if (stepNum === this.currentWizardStep) {
+        circle.style.background = 'var(--primary)';
+      } else if (stepNum < this.currentWizardStep) {
+        circle.style.background = 'var(--success)';
+      } else {
+        circle.style.background = 'var(--gray-300)';
+      }
+    });
+
+    // Update content
+    document.querySelectorAll('.wizard-content').forEach(content => {
+      content.style.display = parseInt(content.dataset.step) === this.currentWizardStep ? 'block' : 'none';
+    });
+
+    // Update buttons
+    document.getElementById('prevBtn').style.display = this.currentWizardStep === 1 ? 'none' : 'inline-block';
+    document.getElementById('nextBtn').style.display = this.currentWizardStep === 4 ? 'none' : 'inline-block';
+    document.getElementById('submitBtn').style.display = this.currentWizardStep === 4 ? 'inline-block' : 'none';
+  }
+
+  async submitStudy() {
+    try {
+      const title = document.getElementById('studyTitle').value;
+      const studyType = document.getElementById('studyType').value;
+      const objective = document.getElementById('studyObjective').value;
+      const description = document.getElementById('studyDescription').value;
+      const plannedDuration = parseInt(document.getElementById('studyDuration').value);
+
+      if (!title || !studyType || !objective) {
+        this.showMessage('Por favor complete los campos requeridos', 'error');
+        return;
+      }
+
+      // Recoger criterios
+      const ageMin = document.getElementById('ageMin').value;
+      const ageMax = document.getElementById('ageMax').value;
+      const gender = document.getElementById('gender').value;
+      const diseases = document.getElementById('diseases').value
+        .split(',')
+        .map(d => d.trim())
+        .filter(d => d);
+
+      // Recoger puntos de seguimiento
+      const followUpCheckboxes = document.querySelectorAll('[data-step="4"] input[type="checkbox"]:checked');
+      const timePoints = Array.from(followUpCheckboxes).map(cb => parseInt(cb.value));
+
+      const targetCohortSize = document.getElementById('targetCohortSize').value;
+
+      const studyData = {
+        title,
+        studyType,
+        objective,
+        description,
+        plannedDuration,
+        inclusionCriteria: {
+          age: {
+            min: ageMin ? parseInt(ageMin) : null,
+            max: ageMax ? parseInt(ageMax) : null
+          },
+          gender: gender || 'todos',
+          diseases
+        },
+        followUp: {
+          timePoints,
+          automatic: true,
+          notifications: {
+            enabled: true,
+            daysBeforeFollowUp: 7
+          }
+        },
+        variables: {
+          adherence: { overall: true, byMedication: true, reasonsForNonAdherence: true },
+          adverseEvents: { collect: true, severity: true, causality: true },
+          clinical: { diseases: true, comorbidities: true }
+        }
+      };
+
+      if (targetCohortSize) {
+        studyData.stats = { targetCohortSize: parseInt(targetCohortSize) };
+      }
+
+      const result = await api.createStudy(studyData);
+
+      this.showMessage('Estudio creado exitosamente', 'success');
+
+      // Cerrar modal
+      document.querySelector('.modal').remove();
+
+      // Recargar lista de estudios
+      await this.showAdminSection('studies');
+
+    } catch (error) {
+      logger.error('Error creating study:', error);
+      this.showMessage('Error al crear el estudio: ' + error.message, 'error');
+    }
+  }
+
+  async viewStudyDetail(studyId) {
+    try {
+      const study = await api.getStudy(studyId);
+
+      // Mostrar modal con detalle del estudio
+      const modal = document.createElement('div');
+      modal.className = 'modal active';
+      modal.innerHTML = `
+        <div class="modal-content" style="max-width: 1000px; max-height: 90vh; overflow-y: auto;">
+          <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 2rem;">
+            <div>
+              <h2>${study.title}</h2>
+              <span class="badge badge-${study.status === 'active' ? 'success' : 'secondary'}">${study.status}</span>
+              <span class="badge" style="background: var(--primary); margin-left: 0.5rem;">${study.studyType}</span>
+            </div>
+            <button class="btn btn-text" onclick="this.closest('.modal').remove()">✕</button>
+          </div>
+
+          <div style="background: var(--gray-50); padding: 1rem; border-radius: 0.5rem; margin-bottom: 1.5rem;">
+            <strong>Objetivo:</strong> ${study.objective}
+          </div>
+
+          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 2rem;">
+            <div class="stat-card">
+              <div style="font-size: 0.875rem; color: var(--gray-600);">Cohorte</div>
+              <div style="font-size: 1.5rem; font-weight: 600;">${study.stats?.cohortSize || 0}</div>
+            </div>
+            <div class="stat-card">
+              <div style="font-size: 0.875rem; color: var(--gray-600);">Activos</div>
+              <div style="font-size: 1.5rem; font-weight: 600; color: var(--success);">${study.stats?.activePatients || 0}</div>
+            </div>
+            <div class="stat-card">
+              <div style="font-size: 0.875rem; color: var(--gray-600);">Adherencia Media</div>
+              <div style="font-size: 1.5rem; font-weight: 600; color: var(--primary);">${study.stats?.averageAdherence || 0}%</div>
+            </div>
+            <div class="stat-card">
+              <div style="font-size: 0.875rem; color: var(--gray-600);">Seguimientos</div>
+              <div style="font-size: 1.5rem; font-weight: 600;">${study.stats?.completedFollowUps || 0}/${study.stats?.totalFollowUps || 0}</div>
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 1rem; margin-bottom: 2rem;">
+            ${study.status === 'draft' ? `
+              <button class="btn btn-primary" onclick="app.activateStudy('${study._id}')">
+                🚀 Activar Estudio
+              </button>
+            ` : ''}
+            ${study.status === 'active' ? `
+              <button class="btn btn-success" onclick="app.enrollPatientsInStudy('${study._id}')">
+                👥 Añadir Pacientes
+              </button>
+              <button class="btn btn-secondary" onclick="app.exportStudy('${study._id}')">
+                📥 Exportar Datos
+              </button>
+            ` : ''}
+            <button class="btn btn-outline" onclick="this.closest('.modal').remove()">
+              Cerrar
+            </button>
+          </div>
+
+          <div style="border-top: 1px solid var(--gray-200); padding-top: 1.5rem;">
+            <h3>Cohorte del Estudio</h3>
+            ${study.cohort && study.cohort.length > 0 ? `
+              <div class="table-container">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Paciente</th>
+                      <th>Estado</th>
+                      <th>Fecha Inclusión</th>
+                      <th>Seguimientos</th>
+                      <th>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${study.cohort.map(c => `
+                      <tr>
+                        <td>${c.patient?.name || 'N/A'}</td>
+                        <td><span class="badge badge-${c.status === 'active' ? 'success' : 'secondary'}">${c.status}</span></td>
+                        <td>${new Date(c.enrolledAt).toLocaleDateString('es-ES')}</td>
+                        <td>${c.followUps?.length || 0}</td>
+                        <td>
+                          <button class="btn btn-sm btn-outline" onclick="app.viewPatientTimeline('${c.patient._id}')">
+                            Timeline
+                          </button>
+                        </td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </div>
+            ` : `
+              <p style="text-align: center; color: var(--gray-600); padding: 2rem;">
+                No hay pacientes en la cohorte.
+                <button class="btn btn-primary" onclick="app.enrollPatientsInStudy('${study._id}')">
+                  Añadir pacientes
+                </button>
+              </p>
+            `}
+          </div>
+        </div>
+      `;
+
+      document.body.appendChild(modal);
+    } catch (error) {
+      logger.error('Error viewing study:', error);
+      this.showMessage('Error al cargar detalle del estudio: ' + error.message, 'error');
+    }
+  }
+
+  async activateStudy(studyId) {
+    try {
+      await api.activateStudy(studyId);
+      this.showMessage('Estudio activado exitosamente', 'success');
+
+      // Cerrar modal y recargar
+      document.querySelector('.modal')?.remove();
+      await this.showAdminSection('studies');
+    } catch (error) {
+      logger.error('Error activating study:', error);
+      this.showMessage('Error al activar estudio: ' + error.message, 'error');
+    }
+  }
+
+  async enrollPatientsInStudy(studyId) {
+    try {
+      // Generar cohorte automáticamente
+      const result = await api.generateStudyCohort(studyId);
+
+      const candidates = result.data.candidates || [];
+
+      if (candidates.length === 0) {
+        this.showMessage('No se encontraron pacientes que cumplan los criterios', 'warning');
+        return;
+      }
+
+      // Mostrar modal de selección de pacientes
+      const modal = document.createElement('div');
+      modal.className = 'modal active';
+      modal.innerHTML = `
+        <div class="modal-content" style="max-width: 800px;">
+          <h2>Añadir Pacientes al Estudio</h2>
+          <p>Se encontraron ${candidates.length} pacientes que cumplen los criterios:</p>
+
+          <div class="table-container" style="max-height: 400px; overflow-y: auto;">
+            <table>
+              <thead>
+                <tr>
+                  <th><input type="checkbox" id="selectAll" onchange="app.toggleSelectAll(this)"></th>
+                  <th>Nombre</th>
+                  <th>Edad</th>
+                  <th>Adherencia</th>
+                  <th>Enfermedades</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${candidates.map(patient => `
+                  <tr>
+                    <td><input type="checkbox" class="patient-checkbox" value="${patient.id}"></td>
+                    <td>${patient.name}</td>
+                    <td>${patient.age || 'N/A'}</td>
+                    <td><span class="badge badge-${patient.adherence >= 80 ? 'success' : 'warning'}">${patient.adherence}%</span></td>
+                    <td>${(patient.diseases || []).join(', ')}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+
+          <div class="modal-actions" style="margin-top: 1.5rem;">
+            <button class="btn btn-secondary" onclick="this.closest('.modal').remove()">Cancelar</button>
+            <button class="btn btn-primary" onclick="app.confirmEnrollPatients('${studyId}')">
+              Añadir Seleccionados
+            </button>
+          </div>
+        </div>
+      `;
+
+      document.body.appendChild(modal);
+    } catch (error) {
+      logger.error('Error enrolling patients:', error);
+      this.showMessage('Error al añadir pacientes: ' + error.message, 'error');
+    }
+  }
+
+  toggleSelectAll(checkbox) {
+    document.querySelectorAll('.patient-checkbox').forEach(cb => {
+      cb.checked = checkbox.checked;
+    });
+  }
+
+  async confirmEnrollPatients(studyId) {
+    try {
+      const selected = Array.from(document.querySelectorAll('.patient-checkbox:checked'))
+        .map(cb => cb.value);
+
+      if (selected.length === 0) {
+        this.showMessage('Selecciona al menos un paciente', 'warning');
+        return;
+      }
+
+      await api.enrollPatientsBatch(studyId, selected);
+
+      this.showMessage(`${selected.length} pacientes añadidos al estudio`, 'success');
+
+      // Cerrar modal
+      document.querySelector('.modal').remove();
+
+      // Recargar detalle del estudio
+      await this.viewStudyDetail(studyId);
+    } catch (error) {
+      logger.error('Error confirming enrollment:', error);
+      this.showMessage('Error al añadir pacientes: ' + error.message, 'error');
+    }
+  }
+
+  async exportStudy(studyId) {
+    try {
+      const data = await api.exportStudyData(studyId, 'json');
+
+      // Crear blob y descargar
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `study_${studyId}_${Date.now()}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      this.showMessage('Estudio exportado exitosamente', 'success');
+    } catch (error) {
+      logger.error('Error exporting study:', error);
+      this.showMessage('Error al exportar estudio: ' + error.message, 'error');
+    }
+  }
+
+  async viewPatientTimeline(patientId) {
+    // Este método se implementará con la vista de timeline
+    this.showMessage('Vista de timeline en desarrollo', 'info');
+  }
+}
 }
 
 
