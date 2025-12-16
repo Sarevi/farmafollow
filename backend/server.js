@@ -62,6 +62,11 @@ app.use('/api/consents', require('./routes/consents'));
 // Rutas de exportación científica (STROBE, FAIR, OMOP CDM, FHIR)
 app.use('/api/export', require('./routes/scientificExport'));
 
+// ===== NUEVAS RUTAS - FASE C: Inteligencia Clínica =====
+
+// Rutas de señales clínicas y detección de patrones
+app.use('/api/signals', require('./routes/clinicalSignals'));
+
 // Ruta de prueba
 app.get('/api/health', (req, res) => {
   res.json({ 
