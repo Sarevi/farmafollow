@@ -1441,7 +1441,7 @@ class FarmaFollowApp {
     // Back button header
     const header = `
       <div style="background: white; border-bottom: 1px solid var(--gray-200); padding: 1rem 2rem; margin-bottom: 2rem;">
-        <button class="btn btn-secondary" onclick="app.showView('admin')" style="margin-right: 1rem;">
+        <button class="btn btn-secondary" onclick="app.showScreen('admin-dashboard')" style="margin-right: 1rem;">
           ← Volver al Dashboard
         </button>
       </div>
@@ -1483,7 +1483,7 @@ class FarmaFollowApp {
 
     const header = `
       <div style="background: white; border-bottom: 1px solid var(--gray-200); padding: 1rem 2rem; margin-bottom: 2rem;">
-        <button class="btn btn-secondary" onclick="app.showView('admin')">
+        <button class="btn btn-secondary" onclick="app.showScreen('admin-dashboard')">
           ← Volver al Dashboard
         </button>
       </div>
@@ -5680,14 +5680,20 @@ class FarmaFollowApp {
    * Mostrar panel de gestión de consentimientos
    */
   async showConsentManagement() {
-    const container = document.getElementById('adminSectionContainer');
-    if (!container) return;
+    const app = document.getElementById('app');
+    if (!app) return;
 
     try {
       const users = await api.getUsers();
 
-      container.innerHTML = `
-        <div class="section-header">
+      app.innerHTML = `
+        <div style="background: white; border-bottom: 1px solid var(--gray-200); padding: 1rem 2rem; margin-bottom: 2rem;">
+          <button class="btn btn-secondary" onclick="app.showScreen('admin-dashboard')">
+            ← Volver al Dashboard
+          </button>
+        </div>
+
+        <div class="section-header" style="padding: 0 2rem;">
           <h2>🔒 Gestión de Consentimientos GDPR</h2>
           <p>Administra los consentimientos de datos de investigación y cumplimiento GDPR</p>
         </div>
