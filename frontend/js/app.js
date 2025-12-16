@@ -902,9 +902,108 @@ class FarmaFollowApp {
       const draftStudies = this.studies.filter(s => s.status === 'draft').length;
       const totalCohortSize = this.studies.reduce((sum, s) => sum + (s.stats?.cohortSize || 0), 0);
 
+      // Calculate alerts and new patients
+      const criticalAlerts = lowAdherenceCount + pendingConsultations;
+      const newPatientsThisWeek = users.filter(u => {
+        if (!u.createdAt) return false;
+        const weekAgo = new Date(Date.now() - 7*24*60*60*1000);
+        return new Date(u.createdAt) > weekAgo;
+      }).length;
+
       container.innerHTML = `
+        <div class="admin-header-enhanced">
+          <div class="admin-title-section">
+            <h1 class="admin-title">📊 Panel de Administración</h1>
+            <p class="admin-subtitle">Gestión integral de FarmaFollow</p>
+          </div>
+          <div class="admin-header-actions">
+            <div class="admin-search-box">
+              <input
+                type="text"
+                id="adminQuickSearch"
+                placeholder="🔍 Buscar paciente, medicamento..."
+                class="admin-search-input"
+              />
+            </div>
+            <button class="btn-icon-header" onclick="app.showComparativeAnalysis()" title="Análisis Comparativo">
+              📊
+            </button>
+            <button class="btn-icon-header" onclick="app.showCalendarView()" title="Calendario">
+              📅
+            </button>
+          </div>
+        </div>
+
+        <!-- Priority Alerts Panel -->
+        ${criticalAlerts > 0 ? `
+          <div class="priority-alerts-panel">
+            <div class="alert-panel-header">
+              <span class="alert-pulse"></span>
+              <strong>⚠️ ${criticalAlerts} Alertas Prioritarias</strong>
+            </div>
+            <div class="alert-panel-items">
+              ${lowAdherenceCount > 0 ? `
+                <div class="alert-item alert-warning" onclick="app.quickActionLowAdherence()">
+                  <div class="alert-icon">👤</div>
+                  <div class="alert-content">
+                    <div class="alert-title">${lowAdherenceCount} pacientes con baja adherencia</div>
+                    <div class="alert-desc">Requieren seguimiento inmediato (< 60%)</div>
+                  </div>
+                  <div class="alert-action">Ver →</div>
+                </div>
+              ` : ''}
+              ${pendingConsultations > 0 ? `
+                <div class="alert-item alert-info" onclick="app.quickActionPendingConsultations()">
+                  <div class="alert-icon">💬</div>
+                  <div class="alert-content">
+                    <div class="alert-title">${pendingConsultations} consultas pendientes</div>
+                    <div class="alert-desc">Esperando respuesta del farmacéutico</div>
+                  </div>
+                  <div class="alert-action">Responder →</div>
+                </div>
+              ` : ''}
+            </div>
+          </div>
+        ` : ''}
+
+        <!-- Quick Stats Overview -->
+        <div class="quick-stats-bar">
+          <div class="quick-stat-item">
+            <span class="quick-stat-icon">👥</span>
+            <div class="quick-stat-data">
+              <div class="quick-stat-value">${users.length}</div>
+              <div class="quick-stat-label">Total Pacientes</div>
+              ${newPatientsThisWeek > 0 ? `<div class="quick-stat-badge">+${newPatientsThisWeek} esta semana</div>` : ''}
+            </div>
+          </div>
+          <div class="quick-stat-item">
+            <span class="quick-stat-icon">📈</span>
+            <div class="quick-stat-data">
+              <div class="quick-stat-value">${avgAdherence}%</div>
+              <div class="quick-stat-label">Adherencia Media</div>
+              <div class="quick-stat-trend ${avgAdherence >= 80 ? 'trend-up' : avgAdherence >= 60 ? 'trend-neutral' : 'trend-down'}">
+                ${avgAdherence >= 80 ? '↑ Excelente' : avgAdherence >= 60 ? '→ Aceptable' : '↓ Crítico'}
+              </div>
+            </div>
+          </div>
+          <div class="quick-stat-item">
+            <span class="quick-stat-icon">💊</span>
+            <div class="quick-stat-data">
+              <div class="quick-stat-value">${activeMedications}</div>
+              <div class="quick-stat-label">Medicamentos Activos</div>
+            </div>
+          </div>
+          <div class="quick-stat-item">
+            <span class="quick-stat-icon">✅</span>
+            <div class="quick-stat-data">
+              <div class="quick-stat-value">${resolvedConsultations}</div>
+              <div class="quick-stat-label">Consultas Resueltas</div>
+            </div>
+          </div>
+        </div>
+
         <div class="admin-header">
-          <h1 class="admin-title">📊 Panel de Administración</h1>
+          <h2 class="section-title">📋 Métricas Detalladas</h2>
         </div>
 
         <div class="admin-stats">
