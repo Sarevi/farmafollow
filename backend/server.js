@@ -43,6 +43,17 @@ app.use('/api/questionnaires', require('./routes/questionnaires'));
 // Rutas de historial clínico
 app.use('/api/clinical-history', require('./routes/clinicalHistory'));
 
+// ===== NUEVAS RUTAS - FASE A: Constructor de Estudios RWE =====
+
+// Rutas de estudios observacionales RWE
+app.use('/api/studies', require('./routes/studies'));
+
+// Rutas de intervenciones farmacéuticas
+app.use('/api/interventions', require('./routes/pharmaceuticalInterventions'));
+
+// Rutas de timeline clínico unificado
+app.use('/api/timeline', require('./routes/timeline'));
+
 // Ruta de prueba
 app.get('/api/health', (req, res) => {
   res.json({ 
