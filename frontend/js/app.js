@@ -5918,8 +5918,6 @@ class FarmaFollowApp {
     }
   }
 }
-}
-
 
 const app = new FarmaFollowApp();
 document.addEventListener('DOMContentLoaded', () => app.init());

@@ -459,7 +459,7 @@ standardTerminologySchema.methods.getPreferredCode = function(standard = 'SNOMED
 /**
  * Validar mapeo
  */
-standardTerminologySchema.methods.validate = async function(userId, notes = '') {
+standardTerminologySchema.methods.validateMapping = async function(userId, notes = '') {
   this.validationStatus = 'validated';
   this.validatedBy = userId;
   this.validatedAt = new Date();
