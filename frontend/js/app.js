@@ -868,12 +868,13 @@ class FarmaFollowApp {
   
   async renderAdminDashboard(container) {
     try {
-      const [users, medications, consultations, questionnaires, studies] = await Promise.all([
+      const [users, medications, consultations, questionnaires, studies, consentStats] = await Promise.all([
         api.getUsers(),
         api.getMedications(),
         api.getAllConsultations(),
         api.getAllQuestionnaires().catch(() => []),
-        api.getStudies().catch(() => ({ data: [] }))
+        api.getStudies().catch(() => ({ data: [] })),
+        api.getConsentStats().catch(() => ({ data: { total: 0, byStatus: { granted: 0 }, consentRate: 0 } }))
       ]);
 
       this.users = users;
@@ -881,6 +882,7 @@ class FarmaFollowApp {
       this.consultations = consultations;
       this.questionnaires = questionnaires;
       this.studies = studies.data || [];
+      this.consentStats = consentStats.data || { total: 0, byStatus: { granted: 0 }, consentRate: 0 };
 
       const pendingConsultations = consultations.filter(c => c.status === 'pending').length;
       const resolvedConsultations = consultations.filter(c => c.status === 'resolved').length;
@@ -1021,7 +1023,7 @@ class FarmaFollowApp {
             </div>
           </div>
 
-          <!-- Estudios RWE Card - NUEVO -->
+          <!-- Estudios RWE Card -->
           <div class="stat-card-enhanced" style="border-left: 4px solid #10b981;">
             <div class="stat-card-content">
               <div class="stat-icon-enhanced" style="background: rgba(16, 185, 129, 0.1);">🔬</div>
@@ -1040,6 +1042,30 @@ class FarmaFollowApp {
               </button>
               <button class="stat-action-btn" onclick="app.createStudy()">
                 + Crear estudio
+              </button>
+            </div>
+          </div>
+
+          <!-- Consentimientos GDPR Card - FASE B -->
+          <div class="stat-card-enhanced" style="border-left: 4px solid #6366f1;">
+            <div class="stat-card-content">
+              <div class="stat-icon-enhanced" style="background: rgba(99, 102, 241, 0.1);">🔒</div>
+              <div class="stat-details">
+                <div class="stat-value">${this.consentStats.byStatus.granted || 0}</div>
+                <div class="stat-label">Consentimientos Activos</div>
+                <div class="stat-mini">
+                  <span style="color: var(--success);">${this.consentStats.consentRate || 0}% tasa de consentimiento</span>
+                  <span style="color: var(--gray-600); font-size: 0.75rem;">·</span>
+                  <span style="color: var(--gray-600); font-size: 0.75rem;">GDPR compliant</span>
+                </div>
+              </div>
+            </div>
+            <div class="stat-actions">
+              <button class="stat-action-btn" onclick="app.showAdminSection('consents')">
+                Gestionar
+              </button>
+              <button class="stat-action-btn" onclick="app.showGDPRPanel()">
+                Panel GDPR
               </button>
             </div>
           </div>
@@ -1352,6 +1378,9 @@ class FarmaFollowApp {
         break;
       case 'studies':
         await this.renderStudies(container);
+        break;
+      case 'consents':
+        await this.showConsentManagement();
         break;
     }
   }
@@ -5481,6 +5510,412 @@ class FarmaFollowApp {
 
   printTimeline() {
     window.print();
+  }
+
+  // ===== CONSENTIMIENTOS Y GDPR (FASE B) =====
+
+  /**
+   * Mostrar panel de gestión de consentimientos
+   */
+  async showConsentManagement() {
+    const container = document.getElementById('adminSectionContainer');
+    if (!container) return;
+
+    try {
+      const users = await api.getUsers();
+
+      container.innerHTML = `
+        <div class="section-header">
+          <h2>🔒 Gestión de Consentimientos GDPR</h2>
+          <p>Administra los consentimientos de datos de investigación y cumplimiento GDPR</p>
+        </div>
+
+        <div class="consents-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem; margin-top: 1.5rem;">
+          ${users.map(user => `
+            <div class="consent-card" style="background: white; border-radius: 8px; padding: 1.5rem; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+              <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem;">
+                <div style="width: 40px; height: 40px; border-radius: 50%; background: var(--primary-light); display: flex; align-items: center; justify-content: center; font-size: 1.25rem;">
+                  👤
+                </div>
+                <div>
+                  <div style="font-weight: 600;">${user.name}</div>
+                  <div style="font-size: 0.875rem; color: var(--gray-600);">${user.email}</div>
+                </div>
+              </div>
+
+              <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem;">
+                <button class="btn btn-sm" onclick="app.viewPatientConsent('${user._id}')" style="width: 100%;">
+                  Ver Consentimiento
+                </button>
+                <button class="btn btn-sm" onclick="app.requestPatientConsent('${user._id}')" style="width: 100%;">
+                  Solicitar Consentimiento
+                </button>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    } catch (error) {
+      console.error('Error loading consents:', error);
+      container.innerHTML = '<div class="error">Error al cargar consentimientos</div>';
+    }
+  }
+
+  /**
+   * Ver consentimiento de un paciente
+   */
+  async viewPatientConsent(patientId) {
+    try {
+      const result = await api.getPatientConsent(patientId);
+      const consent = result.data;
+
+      const modal = document.createElement('div');
+      modal.className = 'modal active';
+      modal.innerHTML = `
+        <div class="modal-content" style="max-width: 800px; max-height: 90vh; overflow-y: auto;">
+          <div class="modal-header">
+            <h2>🔒 Consentimiento Informado</h2>
+            <button class="modal-close" onclick="this.closest('.modal').remove()">&times;</button>
+          </div>
+
+          <div class="modal-body">
+            <div style="margin-bottom: 2rem;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                <div>
+                  <strong>Estado:</strong>
+                  <span class="badge" style="background: ${consent.status === 'granted' ? 'var(--success)' : 'var(--warning)'};">
+                    ${consent.status === 'granted' ? 'Otorgado' : consent.status === 'pending' ? 'Pendiente' : 'Retirado'}
+                  </span>
+                </div>
+                <div style="font-size: 0.875rem; color: var(--gray-600);">
+                  Versión ${consent.version} · ${consent.language}
+                </div>
+              </div>
+
+              ${consent.signature.signedAt ? `
+                <div style="background: var(--success-light); padding: 1rem; border-radius: 4px; margin-bottom: 1rem;">
+                  <strong>✓ Firmado el:</strong> ${new Date(consent.signature.signedAt).toLocaleString('es-ES')}
+                </div>
+              ` : ''}
+            </div>
+
+            <div style="margin-bottom: 2rem;">
+              <h3 style="margin-bottom: 1rem;">Propósitos Autorizados</h3>
+              <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+                ${this.renderConsentPurpose('Investigación General', consent.purposes.generalResearch)}
+                ${this.renderConsentPurpose('Estudios Específicos', consent.purposes.specificStudies)}
+                ${this.renderConsentPurpose('Compartir Datos', consent.purposes.dataSharing)}
+                ${this.renderConsentPurpose('Publicaciones Científicas', consent.purposes.scientificPublications)}
+                ${this.renderConsentPurpose('Contacto para Seguimientos', consent.purposes.contactForFollowUp)}
+                ${this.renderConsentPurpose('Análisis con IA', consent.purposes.aiAnalysis)}
+              </div>
+            </div>
+
+            <div style="margin-bottom: 2rem;">
+              <h3 style="margin-bottom: 1rem;">Trazabilidad (Auditoría GDPR)</h3>
+              <div style="max-height: 300px; overflow-y: auto; background: var(--gray-100); padding: 1rem; border-radius: 4px;">
+                ${consent.auditTrail.map(entry => `
+                  <div style="margin-bottom: 0.75rem; padding-bottom: 0.75rem; border-bottom: 1px solid var(--gray-300);">
+                    <div style="font-weight: 600;">${entry.action}</div>
+                    <div style="font-size: 0.875rem; color: var(--gray-600);">
+                      ${new Date(entry.performedAt).toLocaleString('es-ES')}
+                      ${entry.details ? `· ${entry.details}` : ''}
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          </div>
+
+          <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="this.closest('.modal').remove()">Cerrar</button>
+            <button class="btn btn-primary" onclick="app.exportConsentAudit('${consent._id}')">Exportar Auditoría</button>
+          </div>
+        </div>
+      `;
+
+      document.body.appendChild(modal);
+    } catch (error) {
+      console.error('Error loading consent:', error);
+      alert('Este paciente aún no tiene consentimiento registrado');
+    }
+  }
+
+  renderConsentPurpose(label, purpose) {
+    const granted = purpose && purpose.granted;
+    return `
+      <div style="display: flex; align-items: center; gap: 1rem; padding: 0.75rem; background: ${granted ? 'var(--success-light)' : 'var(--gray-100)'}; border-radius: 4px;">
+        <div style="font-size: 1.5rem;">${granted ? '✓' : '✗'}</div>
+        <div style="flex: 1;">
+          <div style="font-weight: 600;">${label}</div>
+          ${purpose && purpose.grantedAt ? `
+            <div style="font-size: 0.875rem; color: var(--gray-600);">
+              Otorgado: ${new Date(purpose.grantedAt).toLocaleDateString('es-ES')}
+            </div>
+          ` : ''}
+        </div>
+      </div>
+    `;
+  }
+
+  /**
+   * Solicitar consentimiento a un paciente
+   */
+  async requestPatientConsent(patientId) {
+    const modal = document.createElement('div');
+    modal.className = 'modal active';
+    modal.innerHTML = `
+      <div class="modal-content" style="max-width: 600px;">
+        <div class="modal-header">
+          <h2>📝 Solicitar Consentimiento Informado</h2>
+          <button class="modal-close" onclick="this.closest('.modal').remove()">&times;</button>
+        </div>
+
+        <div class="modal-body">
+          <p style="margin-bottom: 1.5rem;">
+            Se creará una solicitud de consentimiento informado para este paciente. El paciente podrá revisar y firmar el consentimiento desde su panel.
+          </p>
+
+          <div style="background: var(--info-light); padding: 1rem; border-radius: 4px; margin-bottom: 1.5rem;">
+            <strong>Información incluida:</strong>
+            <ul style="margin: 0.5rem 0 0 1.5rem;">
+              <li>Uso de datos para investigación RWE</li>
+              <li>Participación en estudios observacionales</li>
+              <li>Derechos GDPR (acceso, rectificación, olvido, portabilidad)</li>
+              <li>Opciones de revocación en cualquier momento</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="this.closest('.modal').remove()">Cancelar</button>
+          <button class="btn btn-primary" onclick="app.createConsentRequest('${patientId}', this)">
+            Crear Solicitud
+          </button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+  }
+
+  async createConsentRequest(patientId, button) {
+    button.disabled = true;
+    button.textContent = 'Creando...';
+
+    try {
+      await api.createConsent({
+        patientId,
+        version: '1.0',
+        language: 'es',
+        status: 'pending'
+      });
+
+      alert('Solicitud de consentimiento creada exitosamente');
+      button.closest('.modal').remove();
+      this.showConsentManagement();
+    } catch (error) {
+      console.error('Error creating consent:', error);
+      alert('Error al crear solicitud de consentimiento');
+      button.disabled = false;
+      button.textContent = 'Crear Solicitud';
+    }
+  }
+
+  /**
+   * Mostrar panel de cumplimiento GDPR
+   */
+  async showGDPRPanel() {
+    const modal = document.createElement('div');
+    modal.className = 'modal active';
+
+    try {
+      const stats = await api.getConsentStats();
+      const data = stats.data;
+
+      modal.innerHTML = `
+        <div class="modal-content" style="max-width: 900px; max-height: 90vh; overflow-y: auto;">
+          <div class="modal-header">
+            <h2>🔒 Panel de Cumplimiento GDPR</h2>
+            <button class="modal-close" onclick="this.closest('.modal').remove()">&times;</button>
+          </div>
+
+          <div class="modal-body">
+            <!-- Métricas principales -->
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 2rem;">
+              <div style="background: var(--primary-light); padding: 1.5rem; border-radius: 8px; text-align: center;">
+                <div style="font-size: 2rem; font-weight: 700; color: var(--primary);">${data.total}</div>
+                <div style="font-size: 0.875rem; color: var(--gray-700);">Total Consentimientos</div>
+              </div>
+
+              <div style="background: var(--success-light); padding: 1.5rem; border-radius: 8px; text-align: center;">
+                <div style="font-size: 2rem; font-weight: 700; color: var(--success);">${data.byStatus.granted}</div>
+                <div style="font-size: 0.875rem; color: var(--gray-700);">Activos</div>
+              </div>
+
+              <div style="background: var(--warning-light); padding: 1.5rem; border-radius: 8px; text-align: center;">
+                <div style="font-size: 2rem; font-weight: 700; color: var(--warning);">${data.byStatus.pending || 0}</div>
+                <div style="font-size: 0.875rem; color: var(--gray-700);">Pendientes</div>
+              </div>
+
+              <div style="background: var(--info-light); padding: 1.5rem; border-radius: 8px; text-align: center;">
+                <div style="font-size: 2rem; font-weight: 700; color: var(--info);">${data.consentRate}%</div>
+                <div style="font-size: 0.875rem; color: var(--gray-700);">Tasa Consentimiento</div>
+              </div>
+            </div>
+
+            <!-- Consentimientos por propósito -->
+            <div style="margin-bottom: 2rem;">
+              <h3 style="margin-bottom: 1rem;">Consentimientos por Propósito</h3>
+              <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                ${this.renderPurposeBar('Investigación General', data.byPurpose.generalResearch, data.total)}
+                ${this.renderPurposeBar('Estudios Específicos', data.byPurpose.specificStudies, data.total)}
+                ${this.renderPurposeBar('Compartir Datos', data.byPurpose.dataSharing, data.total)}
+                ${this.renderPurposeBar('Publicaciones Científicas', data.byPurpose.scientificPublications, data.total)}
+                ${this.renderPurposeBar('Contacto Seguimientos', data.byPurpose.contactForFollowUp, data.total)}
+                ${this.renderPurposeBar('Análisis IA', data.byPurpose.aiAnalysis, data.total)}
+              </div>
+            </div>
+
+            <!-- Checklist de cumplimiento GDPR -->
+            <div style="margin-bottom: 2rem;">
+              <h3 style="margin-bottom: 1rem;">✓ Checklist Cumplimiento GDPR</h3>
+              <div style="background: var(--gray-100); padding: 1.5rem; border-radius: 8px;">
+                ${this.renderGDPRCheckItem('Consentimiento explícito e informado', true)}
+                ${this.renderGDPRCheckItem('Registro de auditoría completo', true)}
+                ${this.renderGDPRCheckItem('Derecho de acceso implementado', true)}
+                ${this.renderGDPRCheckItem('Derecho al olvido implementado', true)}
+                ${this.renderGDPRCheckItem('Portabilidad de datos disponible', true)}
+                ${this.renderGDPRCheckItem('Consentimientos versionados', true)}
+                ${this.renderGDPRCheckItem('Bases legales documentadas', true)}
+                ${this.renderGDPRCheckItem('DPO designado', false)}
+              </div>
+            </div>
+
+            <!-- Información del DPO -->
+            <div style="background: var(--info-light); padding: 1.5rem; border-radius: 8px;">
+              <h4>📧 Delegado de Protección de Datos (DPO)</h4>
+              <p style="margin: 0.5rem 0 0 0; font-size: 0.875rem;">
+                Para consultas sobre protección de datos, contactar con: <strong>dpo@farmafollow.com</strong>
+              </p>
+            </div>
+          </div>
+
+          <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="this.closest('.modal').remove()">Cerrar</button>
+            <button class="btn btn-primary" onclick="app.exportGDPRReport()">Exportar Reporte GDPR</button>
+          </div>
+        </div>
+      `;
+
+      document.body.appendChild(modal);
+    } catch (error) {
+      console.error('Error loading GDPR panel:', error);
+      modal.innerHTML = `
+        <div class="modal-content">
+          <div class="modal-header">
+            <h2>Error</h2>
+            <button class="modal-close" onclick="this.closest('.modal').remove()">&times;</button>
+          </div>
+          <div class="modal-body">
+            <p>Error al cargar el panel GDPR</p>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+    }
+  }
+
+  renderPurposeBar(label, count, total) {
+    const percentage = total > 0 ? Math.round((count / total) * 100) : 0;
+    return `
+      <div style="margin-bottom: 0.5rem;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem; font-size: 0.875rem;">
+          <span>${label}</span>
+          <span>${count} (${percentage}%)</span>
+        </div>
+        <div style="height: 8px; background: var(--gray-300); border-radius: 4px; overflow: hidden;">
+          <div style="height: 100%; width: ${percentage}%; background: var(--primary); transition: width 0.3s;"></div>
+        </div>
+      </div>
+    `;
+  }
+
+  renderGDPRCheckItem(label, compliant) {
+    return `
+      <div style="display: flex; align-items: center; gap: 1rem; padding: 0.75rem; background: white; border-radius: 4px; margin-bottom: 0.5rem;">
+        <div style="font-size: 1.25rem;">${compliant ? '✅' : '⚠️'}</div>
+        <div style="flex: 1;">${label}</div>
+        <div style="font-size: 0.875rem; color: ${compliant ? 'var(--success)' : 'var(--warning)'};">
+          ${compliant ? 'Compliant' : 'Pendiente'}
+        </div>
+      </div>
+    `;
+  }
+
+  async exportConsentAudit(consentId) {
+    try {
+      const result = await api.getConsentAudit(consentId);
+      const data = result.data;
+
+      const csv = [
+        ['Acción', 'Fecha', 'Detalles', 'Dirección IP', 'User Agent'].join(','),
+        ...data.auditTrail.map(entry => [
+          entry.action,
+          new Date(entry.performedAt).toLocaleString('es-ES'),
+          entry.details || '',
+          entry.ipAddress || '',
+          entry.userAgent || ''
+        ].map(cell => `"${cell}"`).join(','))
+      ].join('\n');
+
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `consent_audit_${consentId}_${Date.now()}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Error exporting audit:', error);
+      alert('Error al exportar auditoría');
+    }
+  }
+
+  async exportGDPRReport() {
+    try {
+      const result = await api.getConsentStats();
+      const data = result.data;
+
+      const report = {
+        generatedAt: new Date().toISOString(),
+        summary: data,
+        compliance: {
+          explicitConsent: true,
+          auditTrail: true,
+          rightToAccess: true,
+          rightToErasure: true,
+          dataPortability: true,
+          versionedConsents: true,
+          legalBasis: true,
+          dpoDesignated: false
+        },
+        dpo: {
+          email: 'dpo@farmafollow.com'
+        }
+      };
+
+      const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `gdpr_compliance_report_${Date.now()}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Error exporting GDPR report:', error);
+      alert('Error al exportar reporte GDPR');
+    }
   }
 }
 }

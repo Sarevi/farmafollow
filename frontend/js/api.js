@@ -801,6 +801,146 @@ class API {
     const query = params.toString();
     return await this.request(`/timeline/compare?${query}`);
   }
+
+  // ===== CONSENTIMIENTOS DINÁMICOS (FASE B) =====
+
+  // Crear consentimiento
+  async createConsent(data) {
+    return await this.request('/consents', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+  }
+
+  // Firmar consentimiento
+  async signConsent(consentId, signatureData) {
+    return await this.request(`/consents/${consentId}/sign`, {
+      method: 'POST',
+      body: JSON.stringify(signatureData)
+    });
+  }
+
+  // Otorgar propósito específico
+  async grantConsentPurpose(consentId, purposeName, additionalData = {}) {
+    return await this.request(`/consents/${consentId}/purposes/${purposeName}/grant`, {
+      method: 'POST',
+      body: JSON.stringify(additionalData)
+    });
+  }
+
+  // Retirar propósito específico
+  async withdrawConsentPurpose(consentId, purposeName, reason = '') {
+    return await this.request(`/consents/${consentId}/purposes/${purposeName}/withdraw`, {
+      method: 'POST',
+      body: JSON.stringify({ reason })
+    });
+  }
+
+  // Autorizar estudio específico
+  async authorizeStudyConsent(consentId, studyId) {
+    return await this.request(`/consents/${consentId}/studies/${studyId}/authorize`, {
+      method: 'POST'
+    });
+  }
+
+  // Retirar autorización de estudio
+  async withdrawStudyConsent(consentId, studyId) {
+    return await this.request(`/consents/${consentId}/studies/${studyId}/withdraw`, {
+      method: 'POST'
+    });
+  }
+
+  // Retirar consentimiento completamente
+  async withdrawConsent(consentId, reason = '') {
+    return await this.request(`/consents/${consentId}/withdraw`, {
+      method: 'POST',
+      body: JSON.stringify({ reason })
+    });
+  }
+
+  // Obtener consentimiento activo de un paciente
+  async getPatientConsent(patientId) {
+    return await this.request(`/consents/patient/${patientId}`);
+  }
+
+  // Obtener todos los consentimientos de un paciente (historial)
+  async getPatientConsentsHistory(patientId) {
+    return await this.request(`/consents/patient/${patientId}/all`);
+  }
+
+  // Obtener consentimiento específico
+  async getConsent(consentId) {
+    return await this.request(`/consents/${consentId}`);
+  }
+
+  // Obtener auditoría de consentimiento
+  async getConsentAudit(consentId) {
+    return await this.request(`/consents/${consentId}/audit`);
+  }
+
+  // Verificar si paciente ha otorgado un propósito
+  async checkConsentPurpose(patientId, purposeName) {
+    return await this.request(`/consents/check/${patientId}/purpose/${purposeName}`);
+  }
+
+  // Verificar si paciente ha autorizado un estudio
+  async checkStudyConsent(patientId, studyId) {
+    return await this.request(`/consents/check/${patientId}/study/${studyId}`);
+  }
+
+  // Solicitar derecho al olvido (GDPR)
+  async requestErasure(consentId, reason = '') {
+    return await this.request(`/consents/${consentId}/gdpr/erasure`, {
+      method: 'POST',
+      body: JSON.stringify({ reason })
+    });
+  }
+
+  // Solicitar acceso a datos (GDPR)
+  async requestDataAccess(consentId) {
+    return await this.request(`/consents/${consentId}/gdpr/access`, {
+      method: 'POST'
+    });
+  }
+
+  // Solicitar portabilidad de datos (GDPR)
+  async requestDataPortability(consentId, format = 'JSON') {
+    return await this.request(`/consents/${consentId}/gdpr/portability`, {
+      method: 'POST',
+      body: JSON.stringify({ format })
+    });
+  }
+
+  // Obtener estadísticas globales de consentimientos
+  async getConsentStats() {
+    return await this.request('/consents/stats/global');
+  }
+
+  // ===== EXPORTACIÓN CIENTÍFICA (FASE B) =====
+
+  // Exportar estudio completo
+  async exportStudy(studyId, options = {}) {
+    const params = new URLSearchParams();
+    if (options.format) params.append('format', options.format); // json, csv, omop, fhir
+    if (options.anonymize !== undefined) params.append('anonymize', options.anonymize);
+    if (options.includeMetadata !== undefined) params.append('includeMetadata', options.includeMetadata);
+    if (options.strobeChecklist !== undefined) params.append('strobeChecklist', options.strobeChecklist);
+
+    const query = params.toString();
+    return await this.request(`/export/study/${studyId}${query ? '?' + query : ''}`);
+  }
+
+  // Descargar estudio exportado (para CSV)
+  async downloadStudyExport(studyId, format = 'csv') {
+    const token = this.getToken();
+    const url = `${this.baseURL}/export/study/${studyId}?format=${format}&anonymize=true`;
+
+    // Descargar archivo
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `study_${studyId}_${format}_${Date.now()}.${format}`;
+    link.click();
+  }
 }
 
 // Crear instancia global

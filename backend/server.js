@@ -54,6 +54,14 @@ app.use('/api/interventions', require('./routes/pharmaceuticalInterventions'));
 // Rutas de timeline clínico unificado
 app.use('/api/timeline', require('./routes/timeline'));
 
+// ===== NUEVAS RUTAS - FASE B: Consentimiento + Estándares =====
+
+// Rutas de consentimientos dinámicos (GDPR, HIPAA, ICH-GCP)
+app.use('/api/consents', require('./routes/consents'));
+
+// Rutas de exportación científica (STROBE, FAIR, OMOP CDM, FHIR)
+app.use('/api/export', require('./routes/scientificExport'));
+
 // Ruta de prueba
 app.get('/api/health', (req, res) => {
   res.json({ 
