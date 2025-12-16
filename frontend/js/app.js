@@ -5216,8 +5216,271 @@ class FarmaFollowApp {
   }
 
   async viewPatientTimeline(patientId) {
-    // Este método se implementará con la vista de timeline
-    this.showMessage('Vista de timeline en desarrollo', 'info');
+    try {
+      // Obtener timeline y resumen del paciente
+      const [timelineData, summary] = await Promise.all([
+        api.getPatientTimeline(patientId, { limit: 100 }),
+        api.getPatientTimelineSummary(patientId)
+      ]);
+
+      const timeline = timelineData.data.timeline || [];
+      const patient = timelineData.data.patient;
+      const stats = timelineData.data.stats;
+
+      // Iconos por categoría
+      const categoryIcons = {
+        'clinical': '🏥',
+        'treatment': '💊',
+        'adherence': '📊',
+        'safety': '⚠️',
+        'intervention': '👨‍⚕️',
+        'communication': '💬',
+        'assessment': '📝'
+      };
+
+      // Colores por severidad
+      const severityColors = {
+        'info': '#3b82f6',
+        'success': '#10b981',
+        'warning': '#f59e0b',
+        'error': '#ef4444'
+      };
+
+      // Crear modal
+      const modal = document.createElement('div');
+      modal.className = 'modal active';
+      modal.innerHTML = `
+        <div class="modal-content" style="max-width: 1200px; max-height: 90vh; overflow-y: auto;">
+          <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 2rem;">
+            <div>
+              <h2>📋 Timeline Clínico - ${patient.name}</h2>
+              <div style="margin-top: 0.5rem;">
+                <span class="badge badge-info">${patient.age || 'N/A'} años</span>
+                <span class="badge badge-secondary">${patient.gender || 'N/A'}</span>
+                ${patient.diseases && patient.diseases.length > 0 ?
+                  patient.diseases.map(d => `<span class="badge" style="background: var(--primary);">${d}</span>`).join(' ')
+                  : ''}
+              </div>
+            </div>
+            <button class="btn btn-text" onclick="this.closest('.modal').remove()">✕</button>
+          </div>
+
+          <!-- Resumen Ejecutivo -->
+          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 2rem; padding: 1rem; background: var(--gray-50); border-radius: 0.5rem;">
+            <div>
+              <div style="font-size: 0.75rem; color: var(--gray-600); margin-bottom: 0.25rem;">Adherencia Actual</div>
+              <div style="font-size: 1.5rem; font-weight: 600; color: ${
+                summary.data.clinicalStatus.adherence >= 80 ? 'var(--success)' :
+                summary.data.clinicalStatus.adherence >= 60 ? 'var(--warning)' :
+                'var(--danger)'
+              };">
+                ${summary.data.clinicalStatus.adherence}%
+              </div>
+            </div>
+            <div>
+              <div style="font-size: 0.75rem; color: var(--gray-600); margin-bottom: 0.25rem;">Eventos Adversos</div>
+              <div style="font-size: 1.5rem; font-weight: 600;">
+                ${summary.data.clinicalStatus.adverseEventsTotal}
+                ${summary.data.clinicalStatus.adverseEventsActive > 0 ?
+                  `<span style="font-size: 0.875rem; color: var(--danger);">⚠️ ${summary.data.clinicalStatus.adverseEventsActive} activos</span>`
+                  : ''}
+              </div>
+            </div>
+            <div>
+              <div style="font-size: 0.75rem; color: var(--gray-600); margin-bottom: 0.25rem;">Intervenciones</div>
+              <div style="font-size: 1.5rem; font-weight: 600;">${summary.data.activity.interventions}</div>
+            </div>
+            <div>
+              <div style="font-size: 0.75rem; color: var(--gray-600); margin-bottom: 0.25rem;">Total Eventos</div>
+              <div style="font-size: 1.5rem; font-weight: 600;">${stats.totalEvents}</div>
+            </div>
+          </div>
+
+          <!-- Alertas Activas -->
+          ${summary.data.alerts && summary.data.alerts.length > 0 ? `
+            <div style="margin-bottom: 1.5rem;">
+              ${summary.data.alerts.map(alert => `
+                <div class="alert alert-${alert.severity}" style="padding: 0.75rem; margin-bottom: 0.5rem; border-left: 4px solid ${severityColors[alert.severity]}; background: ${severityColors[alert.severity]}15; border-radius: 0.5rem;">
+                  <strong>${alert.type === 'adherence' ? '📊 Adherencia' : '⚠️ Eventos Adversos'}:</strong> ${alert.message}
+                </div>
+              `).join('')}
+            </div>
+          ` : ''}
+
+          <!-- Filtros -->
+          <div style="display: flex; gap: 1rem; margin-bottom: 1.5rem; flex-wrap: wrap;">
+            <button class="btn btn-sm ${this.timelineFilter === 'all' ? 'btn-primary' : 'btn-outline'}"
+              onclick="app.filterTimeline('all', '${patientId}')">
+              Todos (${stats.totalEvents})
+            </button>
+            ${Object.entries(stats.byCategory).map(([category, count]) => `
+              <button class="btn btn-sm ${this.timelineFilter === category ? 'btn-primary' : 'btn-outline'}"
+                onclick="app.filterTimeline('${category}', '${patientId}')">
+                ${categoryIcons[category] || '📌'} ${category} (${count})
+              </button>
+            `).join('')}
+          </div>
+
+          <!-- Timeline -->
+          <div id="timelineContainer" style="position: relative;">
+            ${timeline.length === 0 ? `
+              <div style="text-align: center; padding: 3rem; color: var(--gray-600);">
+                <div style="font-size: 3rem; margin-bottom: 1rem;">📋</div>
+                <p>No hay eventos registrados en el timeline</p>
+              </div>
+            ` : `
+              <!-- Línea vertical del timeline -->
+              <div style="position: absolute; left: 40px; top: 0; bottom: 0; width: 2px; background: var(--gray-300);"></div>
+
+              <!-- Eventos del timeline -->
+              <div style="padding-left: 80px;">
+                ${timeline.map((event, index) => `
+                  <div class="timeline-event" data-category="${event.category}" style="position: relative; margin-bottom: 2rem; transition: all 0.2s;">
+                    <!-- Punto en la línea -->
+                    <div style="position: absolute; left: -43px; width: 16px; height: 16px; border-radius: 50%; background: ${severityColors[event.severity]}; border: 3px solid white; box-shadow: 0 0 0 2px ${severityColors[event.severity]};"></div>
+
+                    <!-- Contenido del evento -->
+                    <div style="background: white; border: 1px solid var(--gray-200); border-left: 4px solid ${severityColors[event.severity]}; border-radius: 0.5rem; padding: 1rem; box-shadow: var(--shadow-sm); transition: all 0.2s;"
+                      onmouseover="this.style.boxShadow='var(--shadow)'"
+                      onmouseout="this.style.boxShadow='var(--shadow-sm)'">
+
+                      <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 0.5rem;">
+                        <div style="display: flex; align-items: center; gap: 0.5rem;">
+                          <span style="font-size: 1.25rem;">${event.icon}</span>
+                          <div>
+                            <strong style="font-size: 1rem;">${event.title}</strong>
+                            <div style="font-size: 0.75rem; color: var(--gray-600); margin-top: 0.25rem;">
+                              ${new Date(event.date).toLocaleDateString('es-ES', {
+                                year: 'numeric',
+                                month: 'long',
+                                day: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit'
+                              })}
+                            </div>
+                          </div>
+                        </div>
+                        <div>
+                          <span class="badge badge-${event.severity}">${event.type.replace(/-/g, ' ')}</span>
+                        </div>
+                      </div>
+
+                      <p style="color: var(--gray-700); margin: 0.75rem 0;">${event.description}</p>
+
+                      ${event.data && Object.keys(event.data).length > 0 ? `
+                        <details style="margin-top: 0.75rem;">
+                          <summary style="cursor: pointer; color: var(--primary); font-size: 0.875rem;">Ver detalles</summary>
+                          <div style="margin-top: 0.75rem; padding: 0.75rem; background: var(--gray-50); border-radius: 0.25rem; font-size: 0.875rem;">
+                            ${Object.entries(event.data)
+                              .filter(([key, value]) => value !== null && value !== undefined && value !== '')
+                              .map(([key, value]) => `
+                                <div style="margin-bottom: 0.5rem;">
+                                  <strong style="color: var(--gray-600);">${key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}:</strong>
+                                  <span style="margin-left: 0.5rem;">
+                                    ${typeof value === 'object' ? JSON.stringify(value, null, 2) : value}
+                                  </span>
+                                </div>
+                              `).join('')}
+                          </div>
+                        </details>
+                      ` : ''}
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            `}
+          </div>
+
+          <!-- Acciones -->
+          <div style="display: flex; gap: 1rem; margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid var(--gray-200);">
+            <button class="btn btn-secondary" onclick="app.exportPatientTimeline('${patientId}')">
+              📥 Exportar Timeline
+            </button>
+            <button class="btn btn-outline" onclick="app.printTimeline()">
+              🖨️ Imprimir
+            </button>
+            <button class="btn btn-outline" onclick="this.closest('.modal').remove()">
+              Cerrar
+            </button>
+          </div>
+        </div>
+      `;
+
+      document.body.appendChild(modal);
+      this.currentTimelinePatient = patientId;
+      this.timelineFilter = 'all';
+
+    } catch (error) {
+      logger.error('Error viewing timeline:', error);
+      this.showMessage('Error al cargar timeline: ' + error.message, 'error');
+    }
+  }
+
+  async filterTimeline(category, patientId) {
+    this.timelineFilter = category;
+
+    // Actualizar botones
+    document.querySelectorAll('.modal .btn-sm').forEach(btn => {
+      btn.className = btn.className.replace('btn-primary', 'btn-outline');
+    });
+
+    event.target.className = event.target.className.replace('btn-outline', 'btn-primary');
+
+    // Filtrar eventos
+    const events = document.querySelectorAll('.timeline-event');
+    events.forEach(event => {
+      if (category === 'all' || event.dataset.category === category) {
+        event.style.display = 'block';
+      } else {
+        event.style.display = 'none';
+      }
+    });
+  }
+
+  async exportPatientTimeline(patientId) {
+    try {
+      const timelineData = await api.getPatientTimeline(patientId);
+
+      // Crear CSV
+      const csv = this.convertTimelineToCSV(timelineData.data);
+
+      // Descargar
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `timeline_${patientId}_${Date.now()}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      this.showMessage('Timeline exportado exitosamente', 'success');
+    } catch (error) {
+      logger.error('Error exporting timeline:', error);
+      this.showMessage('Error al exportar timeline: ' + error.message, 'error');
+    }
+  }
+
+  convertTimelineToCSV(data) {
+    const timeline = data.timeline || [];
+
+    const headers = ['Fecha', 'Tipo', 'Categoría', 'Título', 'Descripción', 'Severidad'];
+    const rows = timeline.map(event => [
+      new Date(event.date).toISOString(),
+      event.type,
+      event.category,
+      event.title,
+      event.description.replace(/,/g, ';'),
+      event.severity
+    ]);
+
+    return [
+      headers.join(','),
+      ...rows.map(row => row.join(','))
+    ].join('\n');
+  }
+
+  printTimeline() {
+    window.print();
   }
 }
 }
