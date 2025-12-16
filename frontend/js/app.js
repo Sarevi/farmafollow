@@ -868,17 +868,21 @@ class FarmaFollowApp {
   
   async renderAdminDashboard(container) {
     try {
-      const [users, medications, consultations, questionnaires] = await Promise.all([
+      const [users, medications, consultations, questionnaires, studies, consentStats] = await Promise.all([
         api.getUsers(),
         api.getMedications(),
         api.getAllConsultations(),
-        api.getAllQuestionnaires().catch(() => [])
+        api.getAllQuestionnaires().catch(() => []),
+        api.getStudies().catch(() => ({ data: [] })),
+        api.getConsentStats().catch(() => ({ data: { total: 0, byStatus: { granted: 0 }, consentRate: 0 } }))
       ]);
 
       this.users = users;
       this.medications = medications;
       this.consultations = consultations;
       this.questionnaires = questionnaires;
+      this.studies = studies.data || [];
+      this.consentStats = consentStats.data || { total: 0, byStatus: { granted: 0 }, consentRate: 0 };
 
       const pendingConsultations = consultations.filter(c => c.status === 'pending').length;
       const resolvedConsultations = consultations.filter(c => c.status === 'resolved').length;
@@ -892,6 +896,11 @@ class FarmaFollowApp {
       // Calculate low adherence count
       const lowAdherenceCount = users.filter(u => (u.adherenceRate || 0) < 60).length;
       const assignedQuestionnaires = questionnaires.filter(q => q.status === 'assigned').length;
+
+      // Estudios RWE stats
+      const activeStudies = this.studies.filter(s => s.status === 'active').length;
+      const draftStudies = this.studies.filter(s => s.status === 'draft').length;
+      const totalCohortSize = this.studies.reduce((sum, s) => sum + (s.stats?.cohortSize || 0), 0);
 
       container.innerHTML = `
         <div class="admin-header">
@@ -1010,6 +1019,53 @@ class FarmaFollowApp {
               </button>
               <button class="stat-action-btn" onclick="app.createQuestionnaire()">
                 + Nuevo
+              </button>
+            </div>
+          </div>
+
+          <!-- Estudios RWE Card -->
+          <div class="stat-card-enhanced" style="border-left: 4px solid #10b981;">
+            <div class="stat-card-content">
+              <div class="stat-icon-enhanced" style="background: rgba(16, 185, 129, 0.1);">🔬</div>
+              <div class="stat-details">
+                <div class="stat-value">${activeStudies}</div>
+                <div class="stat-label">Estudios RWE Activos</div>
+                <div class="stat-mini">
+                  <span style="color: var(--gray-600);">${totalCohortSize} pacientes en cohortes</span>
+                  ${draftStudies > 0 ? `<span style="color: var(--gray-600); font-size: 0.75rem;">· ${draftStudies} borradores</span>` : ''}
+                </div>
+              </div>
+            </div>
+            <div class="stat-actions">
+              <button class="stat-action-btn" onclick="app.showAdminSection('studies')">
+                Ver estudios
+              </button>
+              <button class="stat-action-btn" onclick="app.createStudy()">
+                + Crear estudio
+              </button>
+            </div>
+          </div>
+
+          <!-- Consentimientos GDPR Card - FASE B -->
+          <div class="stat-card-enhanced" style="border-left: 4px solid #6366f1;">
+            <div class="stat-card-content">
+              <div class="stat-icon-enhanced" style="background: rgba(99, 102, 241, 0.1);">🔒</div>
+              <div class="stat-details">
+                <div class="stat-value">${this.consentStats.byStatus.granted || 0}</div>
+                <div class="stat-label">Consentimientos Activos</div>
+                <div class="stat-mini">
+                  <span style="color: var(--success);">${this.consentStats.consentRate || 0}% tasa de consentimiento</span>
+                  <span style="color: var(--gray-600); font-size: 0.75rem;">·</span>
+                  <span style="color: var(--gray-600); font-size: 0.75rem;">GDPR compliant</span>
+                </div>
+              </div>
+            </div>
+            <div class="stat-actions">
+              <button class="stat-action-btn" onclick="app.showAdminSection('consents')">
+                Gestionar
+              </button>
+              <button class="stat-action-btn" onclick="app.showGDPRPanel()">
+                Panel GDPR
               </button>
             </div>
           </div>
@@ -1319,6 +1375,12 @@ class FarmaFollowApp {
         break;
       case 'questionnaires':
         await this.renderQuestionnaires(container);
+        break;
+      case 'studies':
+        await this.renderStudies(container);
+        break;
+      case 'consents':
+        await this.showConsentManagement();
         break;
     }
   }
@@ -4547,6 +4609,1315 @@ class FarmaFollowApp {
       if (themeToggle) themeToggle.classList.remove('hidden');
     }
   }
+
+  // ===== ESTUDIOS RWE (REAL WORLD EVIDENCE) =====
+
+  async renderStudies(container) {
+    try {
+      const response = await api.getStudies();
+      const studies = response.data || [];
+
+      const studyTypeColors = {
+        'adherencia': '#3b82f6',
+        'efectividad': '#10b981',
+        'seguridad': '#ef4444',
+        'farmacovigilancia': '#f59e0b',
+        'calidad-vida': '#8b5cf6',
+        'patron-uso': '#06b6d4',
+        'coste-efectividad': '#ec4899',
+        'personalizado': '#6b7280'
+      };
+
+      container.innerHTML = `
+        <div style="background: white; border-radius: 1rem; padding: 1.5rem; box-shadow: var(--shadow);">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+            <h2>🔬 Estudios Real World Evidence</h2>
+            <button class="btn btn-primary" onclick="app.createStudy()">
+              + Crear Estudio RWE
+            </button>
+          </div>
+
+          ${studies.length === 0 ? `
+            <div class="empty-state" style="text-align: center; padding: 3rem; color: var(--gray-600);">
+              <div style="font-size: 4rem; margin-bottom: 1rem;">🔬</div>
+              <h3>No hay estudios creados</h3>
+              <p>Crea tu primer estudio observacional RWE para comenzar</p>
+              <button class="btn btn-primary" onclick="app.createStudy()" style="margin-top: 1rem;">
+                Crear Primer Estudio
+              </button>
+            </div>
+          ` : `
+            <div class="studies-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 1.5rem;">
+              ${studies.map(study => `
+                <div class="study-card" style="border: 2px solid ${studyTypeColors[study.studyType] || '#6b7280'}; border-radius: 0.75rem; padding: 1.25rem; background: white; transition: all 0.2s; cursor: pointer;" onclick="app.viewStudyDetail('${study._id}')">
+                  <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 1rem;">
+                    <div>
+                      <h3 style="margin: 0; font-size: 1.125rem;">${study.title}</h3>
+                      <span class="badge" style="background: ${studyTypeColors[study.studyType] || '#6b7280'}; color: white; margin-top: 0.5rem;">
+                        ${study.studyType.replace(/-/g, ' ')}
+                      </span>
+                    </div>
+                    <span class="badge ${
+                      study.status === 'active' ? 'badge-success' :
+                      study.status === 'draft' ? 'badge-secondary' :
+                      study.status === 'completed' ? 'badge-info' :
+                      'badge-warning'
+                    }">
+                      ${study.status}
+                    </span>
+                  </div>
+
+                  <p style="color: var(--gray-600); font-size: 0.875rem; margin-bottom: 1rem;">
+                    ${study.objective.substring(0, 100)}${study.objective.length > 100 ? '...' : ''}
+                  </p>
+
+                  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; padding-top: 1rem; border-top: 1px solid var(--gray-200);">
+                    <div>
+                      <div style="font-size: 0.75rem; color: var(--gray-500);">Cohorte</div>
+                      <div style="font-weight: 600; color: var(--primary);">${study.stats?.cohortSize || 0} pacientes</div>
+                    </div>
+                    <div>
+                      <div style="font-size: 0.75rem; color: var(--gray-500);">Adherencia Media</div>
+                      <div style="font-weight: 600; color: ${
+                        (study.stats?.averageAdherence || 0) >= 80 ? 'var(--success)' :
+                        (study.stats?.averageAdherence || 0) >= 60 ? 'var(--warning)' :
+                        'var(--danger)'
+                      };">
+                        ${study.stats?.averageAdherence || 0}%
+                      </div>
+                    </div>
+                    <div>
+                      <div style="font-size: 0.75rem; color: var(--gray-500);">Activos</div>
+                      <div style="font-weight: 600;">${study.stats?.activePatients || 0}</div>
+                    </div>
+                    <div>
+                      <div style="font-size: 0.75rem; color: var(--gray-500);">Seguimientos</div>
+                      <div style="font-weight: 600;">${study.stats?.completedFollowUps || 0}/${study.stats?.totalFollowUps || 0}</div>
+                    </div>
+                  </div>
+
+                  ${study.startDate ? `
+                    <div style="margin-top: 0.75rem; font-size: 0.75rem; color: var(--gray-500);">
+                      Inicio: ${new Date(study.startDate).toLocaleDateString('es-ES')}
+                    </div>
+                  ` : ''}
+                </div>
+              `).join('')}
+            </div>
+          `}
+        </div>
+      `;
+    } catch (error) {
+      logger.error('Error loading studies:', error);
+      container.innerHTML = `
+        <div class="error">
+          <h3>Error cargando estudios</h3>
+          <p>${error.message}</p>
+        </div>
+      `;
+    }
+  }
+
+  async createStudy() {
+    // Mostrar wizard de creación de estudio
+    const modal = document.createElement('div');
+    modal.className = 'modal active';
+    modal.innerHTML = `
+      <div class="modal-content" style="max-width: 900px; max-height: 90vh; overflow-y: auto;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+          <h2>🔬 Crear Estudio RWE</h2>
+          <button class="btn btn-text" onclick="this.closest('.modal').remove()">✕</button>
+        </div>
+
+        <div id="studyWizard">
+          <!-- Step Indicator -->
+          <div class="wizard-steps" style="display: flex; justify-content: space-between; margin-bottom: 2rem;">
+            <div class="wizard-step active" data-step="1">
+              <div style="width: 40px; height: 40px; border-radius: 50%; background: var(--primary); color: white; display: flex; align-items: center; justify-content: center; margin: 0 auto 0.5rem;">1</div>
+              <div style="font-size: 0.875rem; text-align: center;">Información Básica</div>
+            </div>
+            <div class="wizard-step" data-step="2">
+              <div style="width: 40px; height: 40px; border-radius: 50%; background: var(--gray-300); color: white; display: flex; align-items: center; justify-content: center; margin: 0 auto 0.5rem;">2</div>
+              <div style="font-size: 0.875rem; text-align: center;">Criterios</div>
+            </div>
+            <div class="wizard-step" data-step="3">
+              <div style="width: 40px; height: 40px; border-radius: 50%; background: var(--gray-300); color: white; display: flex; align-items: center; justify-content: center; margin: 0 auto 0.5rem;">3</div>
+              <div style="font-size: 0.875rem; text-align: center;">Variables</div>
+            </div>
+            <div class="wizard-step" data-step="4">
+              <div style="width: 40px; height: 40px; border-radius: 50%; background: var(--gray-300); color: white; display: flex; align-items: center; justify-content: center; margin: 0 auto 0.5rem;">4</div>
+              <div style="font-size: 0.875rem; text-align: center;">Seguimiento</div>
+            </div>
+          </div>
+
+          <!-- Step 1: Información Básica -->
+          <div class="wizard-content" data-step="1">
+            <div class="form-group">
+              <label class="form-label">Título del Estudio *</label>
+              <input type="text" id="studyTitle" class="form-input" required
+                placeholder="Ej: Adherencia en HTA con ARA-II">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Tipo de Estudio *</label>
+              <select id="studyType" class="form-input" required>
+                <option value="">Seleccionar...</option>
+                <option value="adherencia">Adherencia</option>
+                <option value="efectividad">Efectividad</option>
+                <option value="seguridad">Seguridad</option>
+                <option value="farmacovigilancia">Farmacovigilancia</option>
+                <option value="calidad-vida">Calidad de Vida</option>
+                <option value="patron-uso">Patrón de Uso</option>
+                <option value="coste-efectividad">Coste-Efectividad</option>
+                <option value="personalizado">Personalizado</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Objetivo del Estudio *</label>
+              <textarea id="studyObjective" class="form-input" rows="3" required
+                placeholder="Ej: Evaluar la adherencia y efectividad de tratamientos con ARA-II en pacientes con hipertensión arterial mayores de 65 años"></textarea>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Descripción</label>
+              <textarea id="studyDescription" class="form-input" rows="4"
+                placeholder="Descripción detallada del estudio..."></textarea>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Duración Planificada (meses) *</label>
+              <input type="number" id="studyDuration" class="form-input" value="12" min="1" required>
+            </div>
+          </div>
+
+          <!-- Step 2: Criterios (se implementará completo más adelante) -->
+          <div class="wizard-content" data-step="2" style="display: none;">
+            <h3>Criterios de Inclusión</h3>
+            <div class="form-group">
+              <label class="form-label">Edad (años)</label>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                <input type="number" id="ageMin" class="form-input" placeholder="Mínima">
+                <input type="number" id="ageMax" class="form-input" placeholder="Máxima">
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Género</label>
+              <select id="gender" class="form-input">
+                <option value="todos">Todos</option>
+                <option value="masculino">Masculino</option>
+                <option value="femenino">Femenino</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Enfermedades (separadas por comas)</label>
+              <input type="text" id="diseases" class="form-input"
+                placeholder="Ej: hipertensión, diabetes">
+            </div>
+          </div>
+
+          <!-- Step 3: Variables (simplificado) -->
+          <div class="wizard-content" data-step="3" style="display: none;">
+            <h3>Variables a Recoger</h3>
+            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem;">
+              <label style="display: flex; align-items: center; gap: 0.5rem;">
+                <input type="checkbox" checked> Adherencia
+              </label>
+              <label style="display: flex; align-items: center; gap: 0.5rem;">
+                <input type="checkbox" checked> Eventos Adversos
+              </label>
+              <label style="display: flex; align-items: center; gap: 0.5rem;">
+                <input type="checkbox" checked> Parámetros Clínicos
+              </label>
+              <label style="display: flex; align-items: center; gap: 0.5rem;">
+                <input type="checkbox"> PROs (Calidad de Vida)
+              </label>
+            </div>
+          </div>
+
+          <!-- Step 4: Seguimiento -->
+          <div class="wizard-content" data-step="4" style="display: none;">
+            <div class="form-group">
+              <label class="form-label">Puntos de Seguimiento (meses)</label>
+              <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                <label style="display: flex; align-items: center; gap: 0.5rem;">
+                  <input type="checkbox" value="1" checked> 1 mes
+                </label>
+                <label style="display: flex; align-items: center; gap: 0.5rem;">
+                  <input type="checkbox" value="3" checked> 3 meses
+                </label>
+                <label style="display: flex; align-items: center; gap: 0.5rem;">
+                  <input type="checkbox" value="6" checked> 6 meses
+                </label>
+                <label style="display: flex; align-items: center; gap: 0.5rem;">
+                  <input type="checkbox" value="12"> 12 meses
+                </label>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Tamaño Objetivo de Cohorte (opcional)</label>
+              <input type="number" id="targetCohortSize" class="form-input"
+                placeholder="Dejar vacío para sin límite">
+            </div>
+          </div>
+
+          <!-- Navigation Buttons -->
+          <div style="display: flex; justify-content: space-between; margin-top: 2rem; padding-top: 2rem; border-top: 1px solid var(--gray-200);">
+            <button class="btn btn-secondary" id="prevBtn" onclick="app.wizardPrev()" style="display: none;">
+              ← Anterior
+            </button>
+            <div></div>
+            <div style="display: flex; gap: 0.5rem;">
+              <button class="btn btn-secondary" onclick="this.closest('.modal').remove()">
+                Cancelar
+              </button>
+              <button class="btn btn-primary" id="nextBtn" onclick="app.wizardNext()">
+                Siguiente →
+              </button>
+              <button class="btn btn-primary" id="submitBtn" onclick="app.submitStudy()" style="display: none;">
+                Crear Estudio
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+    this.currentWizardStep = 1;
+  }
+
+  wizardNext() {
+    if (this.currentWizardStep < 4) {
+      this.currentWizardStep++;
+      this.updateWizardStep();
+    }
+  }
+
+  wizardPrev() {
+    if (this.currentWizardStep > 1) {
+      this.currentWizardStep--;
+      this.updateWizardStep();
+    }
+  }
+
+  updateWizardStep() {
+    // Update step indicators
+    document.querySelectorAll('.wizard-step').forEach(step => {
+      const stepNum = parseInt(step.dataset.step);
+      step.classList.toggle('active', stepNum === this.currentWizardStep);
+
+      const circle = step.querySelector('div');
+      if (stepNum === this.currentWizardStep) {
+        circle.style.background = 'var(--primary)';
+      } else if (stepNum < this.currentWizardStep) {
+        circle.style.background = 'var(--success)';
+      } else {
+        circle.style.background = 'var(--gray-300)';
+      }
+    });
+
+    // Update content
+    document.querySelectorAll('.wizard-content').forEach(content => {
+      content.style.display = parseInt(content.dataset.step) === this.currentWizardStep ? 'block' : 'none';
+    });
+
+    // Update buttons
+    document.getElementById('prevBtn').style.display = this.currentWizardStep === 1 ? 'none' : 'inline-block';
+    document.getElementById('nextBtn').style.display = this.currentWizardStep === 4 ? 'none' : 'inline-block';
+    document.getElementById('submitBtn').style.display = this.currentWizardStep === 4 ? 'inline-block' : 'none';
+  }
+
+  async submitStudy() {
+    try {
+      const title = document.getElementById('studyTitle').value;
+      const studyType = document.getElementById('studyType').value;
+      const objective = document.getElementById('studyObjective').value;
+      const description = document.getElementById('studyDescription').value;
+      const plannedDuration = parseInt(document.getElementById('studyDuration').value);
+
+      if (!title || !studyType || !objective) {
+        this.showMessage('Por favor complete los campos requeridos', 'error');
+        return;
+      }
+
+      // Recoger criterios
+      const ageMin = document.getElementById('ageMin').value;
+      const ageMax = document.getElementById('ageMax').value;
+      const gender = document.getElementById('gender').value;
+      const diseases = document.getElementById('diseases').value
+        .split(',')
+        .map(d => d.trim())
+        .filter(d => d);
+
+      // Recoger puntos de seguimiento
+      const followUpCheckboxes = document.querySelectorAll('[data-step="4"] input[type="checkbox"]:checked');
+      const timePoints = Array.from(followUpCheckboxes).map(cb => parseInt(cb.value));
+
+      const targetCohortSize = document.getElementById('targetCohortSize').value;
+
+      const studyData = {
+        title,
+        studyType,
+        objective,
+        description,
+        plannedDuration,
+        inclusionCriteria: {
+          age: {
+            min: ageMin ? parseInt(ageMin) : null,
+            max: ageMax ? parseInt(ageMax) : null
+          },
+          gender: gender || 'todos',
+          diseases
+        },
+        followUp: {
+          timePoints,
+          automatic: true,
+          notifications: {
+            enabled: true,
+            daysBeforeFollowUp: 7
+          }
+        },
+        variables: {
+          adherence: { overall: true, byMedication: true, reasonsForNonAdherence: true },
+          adverseEvents: { collect: true, severity: true, causality: true },
+          clinical: { diseases: true, comorbidities: true }
+        }
+      };
+
+      if (targetCohortSize) {
+        studyData.stats = { targetCohortSize: parseInt(targetCohortSize) };
+      }
+
+      const result = await api.createStudy(studyData);
+
+      this.showMessage('Estudio creado exitosamente', 'success');
+
+      // Cerrar modal
+      document.querySelector('.modal').remove();
+
+      // Recargar lista de estudios
+      await this.showAdminSection('studies');
+
+    } catch (error) {
+      logger.error('Error creating study:', error);
+      this.showMessage('Error al crear el estudio: ' + error.message, 'error');
+    }
+  }
+
+  async viewStudyDetail(studyId) {
+    try {
+      const study = await api.getStudy(studyId);
+
+      // Mostrar modal con detalle del estudio
+      const modal = document.createElement('div');
+      modal.className = 'modal active';
+      modal.innerHTML = `
+        <div class="modal-content" style="max-width: 1000px; max-height: 90vh; overflow-y: auto;">
+          <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 2rem;">
+            <div>
+              <h2>${study.title}</h2>
+              <span class="badge badge-${study.status === 'active' ? 'success' : 'secondary'}">${study.status}</span>
+              <span class="badge" style="background: var(--primary); margin-left: 0.5rem;">${study.studyType}</span>
+            </div>
+            <button class="btn btn-text" onclick="this.closest('.modal').remove()">✕</button>
+          </div>
+
+          <div style="background: var(--gray-50); padding: 1rem; border-radius: 0.5rem; margin-bottom: 1.5rem;">
+            <strong>Objetivo:</strong> ${study.objective}
+          </div>
+
+          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 2rem;">
+            <div class="stat-card">
+              <div style="font-size: 0.875rem; color: var(--gray-600);">Cohorte</div>
+              <div style="font-size: 1.5rem; font-weight: 600;">${study.stats?.cohortSize || 0}</div>
+            </div>
+            <div class="stat-card">
+              <div style="font-size: 0.875rem; color: var(--gray-600);">Activos</div>
+              <div style="font-size: 1.5rem; font-weight: 600; color: var(--success);">${study.stats?.activePatients || 0}</div>
+            </div>
+            <div class="stat-card">
+              <div style="font-size: 0.875rem; color: var(--gray-600);">Adherencia Media</div>
+              <div style="font-size: 1.5rem; font-weight: 600; color: var(--primary);">${study.stats?.averageAdherence || 0}%</div>
+            </div>
+            <div class="stat-card">
+              <div style="font-size: 0.875rem; color: var(--gray-600);">Seguimientos</div>
+              <div style="font-size: 1.5rem; font-weight: 600;">${study.stats?.completedFollowUps || 0}/${study.stats?.totalFollowUps || 0}</div>
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 1rem; margin-bottom: 2rem;">
+            ${study.status === 'draft' ? `
+              <button class="btn btn-primary" onclick="app.activateStudy('${study._id}')">
+                🚀 Activar Estudio
+              </button>
+            ` : ''}
+            ${study.status === 'active' ? `
+              <button class="btn btn-success" onclick="app.enrollPatientsInStudy('${study._id}')">
+                👥 Añadir Pacientes
+              </button>
+              <button class="btn btn-secondary" onclick="app.exportStudy('${study._id}')">
+                📥 Exportar Datos
+              </button>
+            ` : ''}
+            <button class="btn btn-outline" onclick="this.closest('.modal').remove()">
+              Cerrar
+            </button>
+          </div>
+
+          <div style="border-top: 1px solid var(--gray-200); padding-top: 1.5rem;">
+            <h3>Cohorte del Estudio</h3>
+            ${study.cohort && study.cohort.length > 0 ? `
+              <div class="table-container">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Paciente</th>
+                      <th>Estado</th>
+                      <th>Fecha Inclusión</th>
+                      <th>Seguimientos</th>
+                      <th>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${study.cohort.map(c => `
+                      <tr>
+                        <td>${c.patient?.name || 'N/A'}</td>
+                        <td><span class="badge badge-${c.status === 'active' ? 'success' : 'secondary'}">${c.status}</span></td>
+                        <td>${new Date(c.enrolledAt).toLocaleDateString('es-ES')}</td>
+                        <td>${c.followUps?.length || 0}</td>
+                        <td>
+                          <button class="btn btn-sm btn-outline" onclick="app.viewPatientTimeline('${c.patient._id}')">
+                            Timeline
+                          </button>
+                        </td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </div>
+            ` : `
+              <p style="text-align: center; color: var(--gray-600); padding: 2rem;">
+                No hay pacientes en la cohorte.
+                <button class="btn btn-primary" onclick="app.enrollPatientsInStudy('${study._id}')">
+                  Añadir pacientes
+                </button>
+              </p>
+            `}
+          </div>
+        </div>
+      `;
+
+      document.body.appendChild(modal);
+    } catch (error) {
+      logger.error('Error viewing study:', error);
+      this.showMessage('Error al cargar detalle del estudio: ' + error.message, 'error');
+    }
+  }
+
+  async activateStudy(studyId) {
+    try {
+      await api.activateStudy(studyId);
+      this.showMessage('Estudio activado exitosamente', 'success');
+
+      // Cerrar modal y recargar
+      document.querySelector('.modal')?.remove();
+      await this.showAdminSection('studies');
+    } catch (error) {
+      logger.error('Error activating study:', error);
+      this.showMessage('Error al activar estudio: ' + error.message, 'error');
+    }
+  }
+
+  async enrollPatientsInStudy(studyId) {
+    try {
+      // Generar cohorte automáticamente
+      const result = await api.generateStudyCohort(studyId);
+
+      const candidates = result.data.candidates || [];
+
+      if (candidates.length === 0) {
+        this.showMessage('No se encontraron pacientes que cumplan los criterios', 'warning');
+        return;
+      }
+
+      // Mostrar modal de selección de pacientes
+      const modal = document.createElement('div');
+      modal.className = 'modal active';
+      modal.innerHTML = `
+        <div class="modal-content" style="max-width: 800px;">
+          <h2>Añadir Pacientes al Estudio</h2>
+          <p>Se encontraron ${candidates.length} pacientes que cumplen los criterios:</p>
+
+          <div class="table-container" style="max-height: 400px; overflow-y: auto;">
+            <table>
+              <thead>
+                <tr>
+                  <th><input type="checkbox" id="selectAll" onchange="app.toggleSelectAll(this)"></th>
+                  <th>Nombre</th>
+                  <th>Edad</th>
+                  <th>Adherencia</th>
+                  <th>Enfermedades</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${candidates.map(patient => `
+                  <tr>
+                    <td><input type="checkbox" class="patient-checkbox" value="${patient.id}"></td>
+                    <td>${patient.name}</td>
+                    <td>${patient.age || 'N/A'}</td>
+                    <td><span class="badge badge-${patient.adherence >= 80 ? 'success' : 'warning'}">${patient.adherence}%</span></td>
+                    <td>${(patient.diseases || []).join(', ')}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+
+          <div class="modal-actions" style="margin-top: 1.5rem;">
+            <button class="btn btn-secondary" onclick="this.closest('.modal').remove()">Cancelar</button>
+            <button class="btn btn-primary" onclick="app.confirmEnrollPatients('${studyId}')">
+              Añadir Seleccionados
+            </button>
+          </div>
+        </div>
+      `;
+
+      document.body.appendChild(modal);
+    } catch (error) {
+      logger.error('Error enrolling patients:', error);
+      this.showMessage('Error al añadir pacientes: ' + error.message, 'error');
+    }
+  }
+
+  toggleSelectAll(checkbox) {
+    document.querySelectorAll('.patient-checkbox').forEach(cb => {
+      cb.checked = checkbox.checked;
+    });
+  }
+
+  async confirmEnrollPatients(studyId) {
+    try {
+      const selected = Array.from(document.querySelectorAll('.patient-checkbox:checked'))
+        .map(cb => cb.value);
+
+      if (selected.length === 0) {
+        this.showMessage('Selecciona al menos un paciente', 'warning');
+        return;
+      }
+
+      await api.enrollPatientsBatch(studyId, selected);
+
+      this.showMessage(`${selected.length} pacientes añadidos al estudio`, 'success');
+
+      // Cerrar modal
+      document.querySelector('.modal').remove();
+
+      // Recargar detalle del estudio
+      await this.viewStudyDetail(studyId);
+    } catch (error) {
+      logger.error('Error confirming enrollment:', error);
+      this.showMessage('Error al añadir pacientes: ' + error.message, 'error');
+    }
+  }
+
+  async exportStudy(studyId) {
+    try {
+      const data = await api.exportStudyData(studyId, 'json');
+
+      // Crear blob y descargar
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `study_${studyId}_${Date.now()}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      this.showMessage('Estudio exportado exitosamente', 'success');
+    } catch (error) {
+      logger.error('Error exporting study:', error);
+      this.showMessage('Error al exportar estudio: ' + error.message, 'error');
+    }
+  }
+
+  async viewPatientTimeline(patientId) {
+    try {
+      // Obtener timeline y resumen del paciente
+      const [timelineData, summary] = await Promise.all([
+        api.getPatientTimeline(patientId, { limit: 100 }),
+        api.getPatientTimelineSummary(patientId)
+      ]);
+
+      const timeline = timelineData.data.timeline || [];
+      const patient = timelineData.data.patient;
+      const stats = timelineData.data.stats;
+
+      // Iconos por categoría
+      const categoryIcons = {
+        'clinical': '🏥',
+        'treatment': '💊',
+        'adherence': '📊',
+        'safety': '⚠️',
+        'intervention': '👨‍⚕️',
+        'communication': '💬',
+        'assessment': '📝'
+      };
+
+      // Colores por severidad
+      const severityColors = {
+        'info': '#3b82f6',
+        'success': '#10b981',
+        'warning': '#f59e0b',
+        'error': '#ef4444'
+      };
+
+      // Crear modal
+      const modal = document.createElement('div');
+      modal.className = 'modal active';
+      modal.innerHTML = `
+        <div class="modal-content" style="max-width: 1200px; max-height: 90vh; overflow-y: auto;">
+          <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 2rem;">
+            <div>
+              <h2>📋 Timeline Clínico - ${patient.name}</h2>
+              <div style="margin-top: 0.5rem;">
+                <span class="badge badge-info">${patient.age || 'N/A'} años</span>
+                <span class="badge badge-secondary">${patient.gender || 'N/A'}</span>
+                ${patient.diseases && patient.diseases.length > 0 ?
+                  patient.diseases.map(d => `<span class="badge" style="background: var(--primary);">${d}</span>`).join(' ')
+                  : ''}
+              </div>
+            </div>
+            <button class="btn btn-text" onclick="this.closest('.modal').remove()">✕</button>
+          </div>
+
+          <!-- Resumen Ejecutivo -->
+          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 2rem; padding: 1rem; background: var(--gray-50); border-radius: 0.5rem;">
+            <div>
+              <div style="font-size: 0.75rem; color: var(--gray-600); margin-bottom: 0.25rem;">Adherencia Actual</div>
+              <div style="font-size: 1.5rem; font-weight: 600; color: ${
+                summary.data.clinicalStatus.adherence >= 80 ? 'var(--success)' :
+                summary.data.clinicalStatus.adherence >= 60 ? 'var(--warning)' :
+                'var(--danger)'
+              };">
+                ${summary.data.clinicalStatus.adherence}%
+              </div>
+            </div>
+            <div>
+              <div style="font-size: 0.75rem; color: var(--gray-600); margin-bottom: 0.25rem;">Eventos Adversos</div>
+              <div style="font-size: 1.5rem; font-weight: 600;">
+                ${summary.data.clinicalStatus.adverseEventsTotal}
+                ${summary.data.clinicalStatus.adverseEventsActive > 0 ?
+                  `<span style="font-size: 0.875rem; color: var(--danger);">⚠️ ${summary.data.clinicalStatus.adverseEventsActive} activos</span>`
+                  : ''}
+              </div>
+            </div>
+            <div>
+              <div style="font-size: 0.75rem; color: var(--gray-600); margin-bottom: 0.25rem;">Intervenciones</div>
+              <div style="font-size: 1.5rem; font-weight: 600;">${summary.data.activity.interventions}</div>
+            </div>
+            <div>
+              <div style="font-size: 0.75rem; color: var(--gray-600); margin-bottom: 0.25rem;">Total Eventos</div>
+              <div style="font-size: 1.5rem; font-weight: 600;">${stats.totalEvents}</div>
+            </div>
+          </div>
+
+          <!-- Alertas Activas -->
+          ${summary.data.alerts && summary.data.alerts.length > 0 ? `
+            <div style="margin-bottom: 1.5rem;">
+              ${summary.data.alerts.map(alert => `
+                <div class="alert alert-${alert.severity}" style="padding: 0.75rem; margin-bottom: 0.5rem; border-left: 4px solid ${severityColors[alert.severity]}; background: ${severityColors[alert.severity]}15; border-radius: 0.5rem;">
+                  <strong>${alert.type === 'adherence' ? '📊 Adherencia' : '⚠️ Eventos Adversos'}:</strong> ${alert.message}
+                </div>
+              `).join('')}
+            </div>
+          ` : ''}
+
+          <!-- Filtros -->
+          <div style="display: flex; gap: 1rem; margin-bottom: 1.5rem; flex-wrap: wrap;">
+            <button class="btn btn-sm ${this.timelineFilter === 'all' ? 'btn-primary' : 'btn-outline'}"
+              onclick="app.filterTimeline('all', '${patientId}')">
+              Todos (${stats.totalEvents})
+            </button>
+            ${Object.entries(stats.byCategory).map(([category, count]) => `
+              <button class="btn btn-sm ${this.timelineFilter === category ? 'btn-primary' : 'btn-outline'}"
+                onclick="app.filterTimeline('${category}', '${patientId}')">
+                ${categoryIcons[category] || '📌'} ${category} (${count})
+              </button>
+            `).join('')}
+          </div>
+
+          <!-- Timeline -->
+          <div id="timelineContainer" style="position: relative;">
+            ${timeline.length === 0 ? `
+              <div style="text-align: center; padding: 3rem; color: var(--gray-600);">
+                <div style="font-size: 3rem; margin-bottom: 1rem;">📋</div>
+                <p>No hay eventos registrados en el timeline</p>
+              </div>
+            ` : `
+              <!-- Línea vertical del timeline -->
+              <div style="position: absolute; left: 40px; top: 0; bottom: 0; width: 2px; background: var(--gray-300);"></div>
+
+              <!-- Eventos del timeline -->
+              <div style="padding-left: 80px;">
+                ${timeline.map((event, index) => `
+                  <div class="timeline-event" data-category="${event.category}" style="position: relative; margin-bottom: 2rem; transition: all 0.2s;">
+                    <!-- Punto en la línea -->
+                    <div style="position: absolute; left: -43px; width: 16px; height: 16px; border-radius: 50%; background: ${severityColors[event.severity]}; border: 3px solid white; box-shadow: 0 0 0 2px ${severityColors[event.severity]};"></div>
+
+                    <!-- Contenido del evento -->
+                    <div style="background: white; border: 1px solid var(--gray-200); border-left: 4px solid ${severityColors[event.severity]}; border-radius: 0.5rem; padding: 1rem; box-shadow: var(--shadow-sm); transition: all 0.2s;"
+                      onmouseover="this.style.boxShadow='var(--shadow)'"
+                      onmouseout="this.style.boxShadow='var(--shadow-sm)'">
+
+                      <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 0.5rem;">
+                        <div style="display: flex; align-items: center; gap: 0.5rem;">
+                          <span style="font-size: 1.25rem;">${event.icon}</span>
+                          <div>
+                            <strong style="font-size: 1rem;">${event.title}</strong>
+                            <div style="font-size: 0.75rem; color: var(--gray-600); margin-top: 0.25rem;">
+                              ${new Date(event.date).toLocaleDateString('es-ES', {
+                                year: 'numeric',
+                                month: 'long',
+                                day: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit'
+                              })}
+                            </div>
+                          </div>
+                        </div>
+                        <div>
+                          <span class="badge badge-${event.severity}">${event.type.replace(/-/g, ' ')}</span>
+                        </div>
+                      </div>
+
+                      <p style="color: var(--gray-700); margin: 0.75rem 0;">${event.description}</p>
+
+                      ${event.data && Object.keys(event.data).length > 0 ? `
+                        <details style="margin-top: 0.75rem;">
+                          <summary style="cursor: pointer; color: var(--primary); font-size: 0.875rem;">Ver detalles</summary>
+                          <div style="margin-top: 0.75rem; padding: 0.75rem; background: var(--gray-50); border-radius: 0.25rem; font-size: 0.875rem;">
+                            ${Object.entries(event.data)
+                              .filter(([key, value]) => value !== null && value !== undefined && value !== '')
+                              .map(([key, value]) => `
+                                <div style="margin-bottom: 0.5rem;">
+                                  <strong style="color: var(--gray-600);">${key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}:</strong>
+                                  <span style="margin-left: 0.5rem;">
+                                    ${typeof value === 'object' ? JSON.stringify(value, null, 2) : value}
+                                  </span>
+                                </div>
+                              `).join('')}
+                          </div>
+                        </details>
+                      ` : ''}
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            `}
+          </div>
+
+          <!-- Acciones -->
+          <div style="display: flex; gap: 1rem; margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid var(--gray-200);">
+            <button class="btn btn-secondary" onclick="app.exportPatientTimeline('${patientId}')">
+              📥 Exportar Timeline
+            </button>
+            <button class="btn btn-outline" onclick="app.printTimeline()">
+              🖨️ Imprimir
+            </button>
+            <button class="btn btn-outline" onclick="this.closest('.modal').remove()">
+              Cerrar
+            </button>
+          </div>
+        </div>
+      `;
+
+      document.body.appendChild(modal);
+      this.currentTimelinePatient = patientId;
+      this.timelineFilter = 'all';
+
+    } catch (error) {
+      logger.error('Error viewing timeline:', error);
+      this.showMessage('Error al cargar timeline: ' + error.message, 'error');
+    }
+  }
+
+  async filterTimeline(category, patientId) {
+    this.timelineFilter = category;
+
+    // Actualizar botones
+    document.querySelectorAll('.modal .btn-sm').forEach(btn => {
+      btn.className = btn.className.replace('btn-primary', 'btn-outline');
+    });
+
+    event.target.className = event.target.className.replace('btn-outline', 'btn-primary');
+
+    // Filtrar eventos
+    const events = document.querySelectorAll('.timeline-event');
+    events.forEach(event => {
+      if (category === 'all' || event.dataset.category === category) {
+        event.style.display = 'block';
+      } else {
+        event.style.display = 'none';
+      }
+    });
+  }
+
+  async exportPatientTimeline(patientId) {
+    try {
+      const timelineData = await api.getPatientTimeline(patientId);
+
+      // Crear CSV
+      const csv = this.convertTimelineToCSV(timelineData.data);
+
+      // Descargar
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `timeline_${patientId}_${Date.now()}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      this.showMessage('Timeline exportado exitosamente', 'success');
+    } catch (error) {
+      logger.error('Error exporting timeline:', error);
+      this.showMessage('Error al exportar timeline: ' + error.message, 'error');
+    }
+  }
+
+  convertTimelineToCSV(data) {
+    const timeline = data.timeline || [];
+
+    const headers = ['Fecha', 'Tipo', 'Categoría', 'Título', 'Descripción', 'Severidad'];
+    const rows = timeline.map(event => [
+      new Date(event.date).toISOString(),
+      event.type,
+      event.category,
+      event.title,
+      event.description.replace(/,/g, ';'),
+      event.severity
+    ]);
+
+    return [
+      headers.join(','),
+      ...rows.map(row => row.join(','))
+    ].join('\n');
+  }
+
+  printTimeline() {
+    window.print();
+  }
+
+  // ===== CONSENTIMIENTOS Y GDPR (FASE B) =====
+
+  /**
+   * Mostrar panel de gestión de consentimientos
+   */
+  async showConsentManagement() {
+    const container = document.getElementById('adminSectionContainer');
+    if (!container) return;
+
+    try {
+      const users = await api.getUsers();
+
+      container.innerHTML = `
+        <div class="section-header">
+          <h2>🔒 Gestión de Consentimientos GDPR</h2>
+          <p>Administra los consentimientos de datos de investigación y cumplimiento GDPR</p>
+        </div>
+
+        <div class="consents-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem; margin-top: 1.5rem;">
+          ${users.map(user => `
+            <div class="consent-card" style="background: white; border-radius: 8px; padding: 1.5rem; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+              <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem;">
+                <div style="width: 40px; height: 40px; border-radius: 50%; background: var(--primary-light); display: flex; align-items: center; justify-content: center; font-size: 1.25rem;">
+                  👤
+                </div>
+                <div>
+                  <div style="font-weight: 600;">${user.name}</div>
+                  <div style="font-size: 0.875rem; color: var(--gray-600);">${user.email}</div>
+                </div>
+              </div>
+
+              <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem;">
+                <button class="btn btn-sm" onclick="app.viewPatientConsent('${user._id}')" style="width: 100%;">
+                  Ver Consentimiento
+                </button>
+                <button class="btn btn-sm" onclick="app.requestPatientConsent('${user._id}')" style="width: 100%;">
+                  Solicitar Consentimiento
+                </button>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    } catch (error) {
+      console.error('Error loading consents:', error);
+      container.innerHTML = '<div class="error">Error al cargar consentimientos</div>';
+    }
+  }
+
+  /**
+   * Ver consentimiento de un paciente
+   */
+  async viewPatientConsent(patientId) {
+    try {
+      const result = await api.getPatientConsent(patientId);
+      const consent = result.data;
+
+      const modal = document.createElement('div');
+      modal.className = 'modal active';
+      modal.innerHTML = `
+        <div class="modal-content" style="max-width: 800px; max-height: 90vh; overflow-y: auto;">
+          <div class="modal-header">
+            <h2>🔒 Consentimiento Informado</h2>
+            <button class="modal-close" onclick="this.closest('.modal').remove()">&times;</button>
+          </div>
+
+          <div class="modal-body">
+            <div style="margin-bottom: 2rem;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                <div>
+                  <strong>Estado:</strong>
+                  <span class="badge" style="background: ${consent.status === 'granted' ? 'var(--success)' : 'var(--warning)'};">
+                    ${consent.status === 'granted' ? 'Otorgado' : consent.status === 'pending' ? 'Pendiente' : 'Retirado'}
+                  </span>
+                </div>
+                <div style="font-size: 0.875rem; color: var(--gray-600);">
+                  Versión ${consent.version} · ${consent.language}
+                </div>
+              </div>
+
+              ${consent.signature.signedAt ? `
+                <div style="background: var(--success-light); padding: 1rem; border-radius: 4px; margin-bottom: 1rem;">
+                  <strong>✓ Firmado el:</strong> ${new Date(consent.signature.signedAt).toLocaleString('es-ES')}
+                </div>
+              ` : ''}
+            </div>
+
+            <div style="margin-bottom: 2rem;">
+              <h3 style="margin-bottom: 1rem;">Propósitos Autorizados</h3>
+              <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+                ${this.renderConsentPurpose('Investigación General', consent.purposes.generalResearch)}
+                ${this.renderConsentPurpose('Estudios Específicos', consent.purposes.specificStudies)}
+                ${this.renderConsentPurpose('Compartir Datos', consent.purposes.dataSharing)}
+                ${this.renderConsentPurpose('Publicaciones Científicas', consent.purposes.scientificPublications)}
+                ${this.renderConsentPurpose('Contacto para Seguimientos', consent.purposes.contactForFollowUp)}
+                ${this.renderConsentPurpose('Análisis con IA', consent.purposes.aiAnalysis)}
+              </div>
+            </div>
+
+            <div style="margin-bottom: 2rem;">
+              <h3 style="margin-bottom: 1rem;">Trazabilidad (Auditoría GDPR)</h3>
+              <div style="max-height: 300px; overflow-y: auto; background: var(--gray-100); padding: 1rem; border-radius: 4px;">
+                ${consent.auditTrail.map(entry => `
+                  <div style="margin-bottom: 0.75rem; padding-bottom: 0.75rem; border-bottom: 1px solid var(--gray-300);">
+                    <div style="font-weight: 600;">${entry.action}</div>
+                    <div style="font-size: 0.875rem; color: var(--gray-600);">
+                      ${new Date(entry.performedAt).toLocaleString('es-ES')}
+                      ${entry.details ? `· ${entry.details}` : ''}
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          </div>
+
+          <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="this.closest('.modal').remove()">Cerrar</button>
+            <button class="btn btn-primary" onclick="app.exportConsentAudit('${consent._id}')">Exportar Auditoría</button>
+          </div>
+        </div>
+      `;
+
+      document.body.appendChild(modal);
+    } catch (error) {
+      console.error('Error loading consent:', error);
+      alert('Este paciente aún no tiene consentimiento registrado');
+    }
+  }
+
+  renderConsentPurpose(label, purpose) {
+    const granted = purpose && purpose.granted;
+    return `
+      <div style="display: flex; align-items: center; gap: 1rem; padding: 0.75rem; background: ${granted ? 'var(--success-light)' : 'var(--gray-100)'}; border-radius: 4px;">
+        <div style="font-size: 1.5rem;">${granted ? '✓' : '✗'}</div>
+        <div style="flex: 1;">
+          <div style="font-weight: 600;">${label}</div>
+          ${purpose && purpose.grantedAt ? `
+            <div style="font-size: 0.875rem; color: var(--gray-600);">
+              Otorgado: ${new Date(purpose.grantedAt).toLocaleDateString('es-ES')}
+            </div>
+          ` : ''}
+        </div>
+      </div>
+    `;
+  }
+
+  /**
+   * Solicitar consentimiento a un paciente
+   */
+  async requestPatientConsent(patientId) {
+    const modal = document.createElement('div');
+    modal.className = 'modal active';
+    modal.innerHTML = `
+      <div class="modal-content" style="max-width: 600px;">
+        <div class="modal-header">
+          <h2>📝 Solicitar Consentimiento Informado</h2>
+          <button class="modal-close" onclick="this.closest('.modal').remove()">&times;</button>
+        </div>
+
+        <div class="modal-body">
+          <p style="margin-bottom: 1.5rem;">
+            Se creará una solicitud de consentimiento informado para este paciente. El paciente podrá revisar y firmar el consentimiento desde su panel.
+          </p>
+
+          <div style="background: var(--info-light); padding: 1rem; border-radius: 4px; margin-bottom: 1.5rem;">
+            <strong>Información incluida:</strong>
+            <ul style="margin: 0.5rem 0 0 1.5rem;">
+              <li>Uso de datos para investigación RWE</li>
+              <li>Participación en estudios observacionales</li>
+              <li>Derechos GDPR (acceso, rectificación, olvido, portabilidad)</li>
+              <li>Opciones de revocación en cualquier momento</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="this.closest('.modal').remove()">Cancelar</button>
+          <button class="btn btn-primary" onclick="app.createConsentRequest('${patientId}', this)">
+            Crear Solicitud
+          </button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+  }
+
+  async createConsentRequest(patientId, button) {
+    button.disabled = true;
+    button.textContent = 'Creando...';
+
+    try {
+      await api.createConsent({
+        patientId,
+        version: '1.0',
+        language: 'es',
+        status: 'pending'
+      });
+
+      alert('Solicitud de consentimiento creada exitosamente');
+      button.closest('.modal').remove();
+      this.showConsentManagement();
+    } catch (error) {
+      console.error('Error creating consent:', error);
+      alert('Error al crear solicitud de consentimiento');
+      button.disabled = false;
+      button.textContent = 'Crear Solicitud';
+    }
+  }
+
+  /**
+   * Mostrar panel de cumplimiento GDPR
+   */
+  async showGDPRPanel() {
+    const modal = document.createElement('div');
+    modal.className = 'modal active';
+
+    try {
+      const stats = await api.getConsentStats();
+      const data = stats.data;
+
+      modal.innerHTML = `
+        <div class="modal-content" style="max-width: 900px; max-height: 90vh; overflow-y: auto;">
+          <div class="modal-header">
+            <h2>🔒 Panel de Cumplimiento GDPR</h2>
+            <button class="modal-close" onclick="this.closest('.modal').remove()">&times;</button>
+          </div>
+
+          <div class="modal-body">
+            <!-- Métricas principales -->
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 2rem;">
+              <div style="background: var(--primary-light); padding: 1.5rem; border-radius: 8px; text-align: center;">
+                <div style="font-size: 2rem; font-weight: 700; color: var(--primary);">${data.total}</div>
+                <div style="font-size: 0.875rem; color: var(--gray-700);">Total Consentimientos</div>
+              </div>
+
+              <div style="background: var(--success-light); padding: 1.5rem; border-radius: 8px; text-align: center;">
+                <div style="font-size: 2rem; font-weight: 700; color: var(--success);">${data.byStatus.granted}</div>
+                <div style="font-size: 0.875rem; color: var(--gray-700);">Activos</div>
+              </div>
+
+              <div style="background: var(--warning-light); padding: 1.5rem; border-radius: 8px; text-align: center;">
+                <div style="font-size: 2rem; font-weight: 700; color: var(--warning);">${data.byStatus.pending || 0}</div>
+                <div style="font-size: 0.875rem; color: var(--gray-700);">Pendientes</div>
+              </div>
+
+              <div style="background: var(--info-light); padding: 1.5rem; border-radius: 8px; text-align: center;">
+                <div style="font-size: 2rem; font-weight: 700; color: var(--info);">${data.consentRate}%</div>
+                <div style="font-size: 0.875rem; color: var(--gray-700);">Tasa Consentimiento</div>
+              </div>
+            </div>
+
+            <!-- Consentimientos por propósito -->
+            <div style="margin-bottom: 2rem;">
+              <h3 style="margin-bottom: 1rem;">Consentimientos por Propósito</h3>
+              <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                ${this.renderPurposeBar('Investigación General', data.byPurpose.generalResearch, data.total)}
+                ${this.renderPurposeBar('Estudios Específicos', data.byPurpose.specificStudies, data.total)}
+                ${this.renderPurposeBar('Compartir Datos', data.byPurpose.dataSharing, data.total)}
+                ${this.renderPurposeBar('Publicaciones Científicas', data.byPurpose.scientificPublications, data.total)}
+                ${this.renderPurposeBar('Contacto Seguimientos', data.byPurpose.contactForFollowUp, data.total)}
+                ${this.renderPurposeBar('Análisis IA', data.byPurpose.aiAnalysis, data.total)}
+              </div>
+            </div>
+
+            <!-- Checklist de cumplimiento GDPR -->
+            <div style="margin-bottom: 2rem;">
+              <h3 style="margin-bottom: 1rem;">✓ Checklist Cumplimiento GDPR</h3>
+              <div style="background: var(--gray-100); padding: 1.5rem; border-radius: 8px;">
+                ${this.renderGDPRCheckItem('Consentimiento explícito e informado', true)}
+                ${this.renderGDPRCheckItem('Registro de auditoría completo', true)}
+                ${this.renderGDPRCheckItem('Derecho de acceso implementado', true)}
+                ${this.renderGDPRCheckItem('Derecho al olvido implementado', true)}
+                ${this.renderGDPRCheckItem('Portabilidad de datos disponible', true)}
+                ${this.renderGDPRCheckItem('Consentimientos versionados', true)}
+                ${this.renderGDPRCheckItem('Bases legales documentadas', true)}
+                ${this.renderGDPRCheckItem('DPO designado', false)}
+              </div>
+            </div>
+
+            <!-- Información del DPO -->
+            <div style="background: var(--info-light); padding: 1.5rem; border-radius: 8px;">
+              <h4>📧 Delegado de Protección de Datos (DPO)</h4>
+              <p style="margin: 0.5rem 0 0 0; font-size: 0.875rem;">
+                Para consultas sobre protección de datos, contactar con: <strong>dpo@farmafollow.com</strong>
+              </p>
+            </div>
+          </div>
+
+          <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="this.closest('.modal').remove()">Cerrar</button>
+            <button class="btn btn-primary" onclick="app.exportGDPRReport()">Exportar Reporte GDPR</button>
+          </div>
+        </div>
+      `;
+
+      document.body.appendChild(modal);
+    } catch (error) {
+      console.error('Error loading GDPR panel:', error);
+      modal.innerHTML = `
+        <div class="modal-content">
+          <div class="modal-header">
+            <h2>Error</h2>
+            <button class="modal-close" onclick="this.closest('.modal').remove()">&times;</button>
+          </div>
+          <div class="modal-body">
+            <p>Error al cargar el panel GDPR</p>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+    }
+  }
+
+  renderPurposeBar(label, count, total) {
+    const percentage = total > 0 ? Math.round((count / total) * 100) : 0;
+    return `
+      <div style="margin-bottom: 0.5rem;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem; font-size: 0.875rem;">
+          <span>${label}</span>
+          <span>${count} (${percentage}%)</span>
+        </div>
+        <div style="height: 8px; background: var(--gray-300); border-radius: 4px; overflow: hidden;">
+          <div style="height: 100%; width: ${percentage}%; background: var(--primary); transition: width 0.3s;"></div>
+        </div>
+      </div>
+    `;
+  }
+
+  renderGDPRCheckItem(label, compliant) {
+    return `
+      <div style="display: flex; align-items: center; gap: 1rem; padding: 0.75rem; background: white; border-radius: 4px; margin-bottom: 0.5rem;">
+        <div style="font-size: 1.25rem;">${compliant ? '✅' : '⚠️'}</div>
+        <div style="flex: 1;">${label}</div>
+        <div style="font-size: 0.875rem; color: ${compliant ? 'var(--success)' : 'var(--warning)'};">
+          ${compliant ? 'Compliant' : 'Pendiente'}
+        </div>
+      </div>
+    `;
+  }
+
+  async exportConsentAudit(consentId) {
+    try {
+      const result = await api.getConsentAudit(consentId);
+      const data = result.data;
+
+      const csv = [
+        ['Acción', 'Fecha', 'Detalles', 'Dirección IP', 'User Agent'].join(','),
+        ...data.auditTrail.map(entry => [
+          entry.action,
+          new Date(entry.performedAt).toLocaleString('es-ES'),
+          entry.details || '',
+          entry.ipAddress || '',
+          entry.userAgent || ''
+        ].map(cell => `"${cell}"`).join(','))
+      ].join('\n');
+
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `consent_audit_${consentId}_${Date.now()}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Error exporting audit:', error);
+      alert('Error al exportar auditoría');
+    }
+  }
+
+  async exportGDPRReport() {
+    try {
+      const result = await api.getConsentStats();
+      const data = result.data;
+
+      const report = {
+        generatedAt: new Date().toISOString(),
+        summary: data,
+        compliance: {
+          explicitConsent: true,
+          auditTrail: true,
+          rightToAccess: true,
+          rightToErasure: true,
+          dataPortability: true,
+          versionedConsents: true,
+          legalBasis: true,
+          dpoDesignated: false
+        },
+        dpo: {
+          email: 'dpo@farmafollow.com'
+        }
+      };
+
+      const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `gdpr_compliance_report_${Date.now()}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Error exporting GDPR report:', error);
+      alert('Error al exportar reporte GDPR');
+    }
+  }
+}
 }
 
 

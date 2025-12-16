@@ -43,6 +43,30 @@ app.use('/api/questionnaires', require('./routes/questionnaires'));
 // Rutas de historial clínico
 app.use('/api/clinical-history', require('./routes/clinicalHistory'));
 
+// ===== NUEVAS RUTAS - FASE A: Constructor de Estudios RWE =====
+
+// Rutas de estudios observacionales RWE
+app.use('/api/studies', require('./routes/studies'));
+
+// Rutas de intervenciones farmacéuticas
+app.use('/api/interventions', require('./routes/pharmaceuticalInterventions'));
+
+// Rutas de timeline clínico unificado
+app.use('/api/timeline', require('./routes/timeline'));
+
+// ===== NUEVAS RUTAS - FASE B: Consentimiento + Estándares =====
+
+// Rutas de consentimientos dinámicos (GDPR, HIPAA, ICH-GCP)
+app.use('/api/consents', require('./routes/consents'));
+
+// Rutas de exportación científica (STROBE, FAIR, OMOP CDM, FHIR)
+app.use('/api/export', require('./routes/scientificExport'));
+
+// ===== NUEVAS RUTAS - FASE C: Inteligencia Clínica =====
+
+// Rutas de señales clínicas y detección de patrones
+app.use('/api/signals', require('./routes/clinicalSignals'));
+
 // Ruta de prueba
 app.get('/api/health', (req, res) => {
   res.json({ 

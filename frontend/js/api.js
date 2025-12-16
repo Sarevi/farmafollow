@@ -524,6 +524,423 @@ class API {
   async getPopulationStats() {
     return await this.request('/clinical-history/stats/population');
   }
+
+  // ===== ESTUDIOS RWE (Real World Evidence) =====
+
+  // Obtener todos los estudios
+  async getStudies(filters = {}) {
+    const params = new URLSearchParams();
+    if (filters.status) params.append('status', filters.status);
+    if (filters.studyType) params.append('studyType', filters.studyType);
+    if (filters.limit) params.append('limit', filters.limit);
+    if (filters.skip) params.append('skip', filters.skip);
+
+    const query = params.toString();
+    return await this.request(`/studies${query ? '?' + query : ''}`);
+  }
+
+  // Obtener estudios activos
+  async getActiveStudies() {
+    return await this.request('/studies/active');
+  }
+
+  // Obtener estadísticas globales de estudios
+  async getStudiesGlobalStats() {
+    return await this.request('/studies/stats/global');
+  }
+
+  // Obtener un estudio específico
+  async getStudy(studyId) {
+    return await this.request(`/studies/${studyId}`);
+  }
+
+  // Crear nuevo estudio
+  async createStudy(data) {
+    return await this.request('/studies', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  // Actualizar estudio
+  async updateStudy(studyId, data) {
+    return await this.request(`/studies/${studyId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  // Eliminar estudio
+  async deleteStudy(studyId) {
+    return await this.request(`/studies/${studyId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // Activar estudio
+  async activateStudy(studyId) {
+    return await this.request(`/studies/${studyId}/activate`, {
+      method: 'POST',
+    });
+  }
+
+  // Pausar estudio
+  async pauseStudy(studyId) {
+    return await this.request(`/studies/${studyId}/pause`, {
+      method: 'POST',
+    });
+  }
+
+  // Reanudar estudio
+  async resumeStudy(studyId) {
+    return await this.request(`/studies/${studyId}/resume`, {
+      method: 'POST',
+    });
+  }
+
+  // Completar estudio
+  async completeStudy(studyId) {
+    return await this.request(`/studies/${studyId}/complete`, {
+      method: 'POST',
+    });
+  }
+
+  // Generar cohorte automáticamente
+  async generateStudyCohort(studyId) {
+    return await this.request(`/studies/${studyId}/generate-cohort`, {
+      method: 'POST',
+    });
+  }
+
+  // Añadir paciente a cohorte
+  async enrollPatientInStudy(studyId, patientId, baselineData = {}) {
+    return await this.request(`/studies/${studyId}/enroll`, {
+      method: 'POST',
+      body: JSON.stringify({ patientId, baselineData }),
+    });
+  }
+
+  // Añadir múltiples pacientes
+  async enrollPatientsBatch(studyId, patientIds) {
+    return await this.request(`/studies/${studyId}/enroll-batch`, {
+      method: 'POST',
+      body: JSON.stringify({ patientIds }),
+    });
+  }
+
+  // Retirar paciente del estudio
+  async withdrawPatientFromStudy(studyId, patientId, reason, notes = '') {
+    return await this.request(`/studies/${studyId}/withdraw`, {
+      method: 'POST',
+      body: JSON.stringify({ patientId, reason, notes }),
+    });
+  }
+
+  // Registrar seguimiento
+  async recordStudyFollowUp(studyId, patientId, timePoint, data, questionnaireResponses = []) {
+    return await this.request(`/studies/${studyId}/follow-up`, {
+      method: 'POST',
+      body: JSON.stringify({ patientId, timePoint, data, questionnaireResponses }),
+    });
+  }
+
+  // Exportar datos del estudio
+  async exportStudyData(studyId, format = 'json') {
+    return await this.request(`/studies/${studyId}/export?format=${format}`);
+  }
+
+  // ===== INTERVENCIONES FARMACÉUTICAS =====
+
+  // Obtener intervenciones
+  async getInterventions(filters = {}) {
+    const params = new URLSearchParams();
+    if (filters.patient) params.append('patient', filters.patient);
+    if (filters.pharmacist) params.append('pharmacist', filters.pharmacist);
+    if (filters.type) params.append('type', filters.type);
+    if (filters.status) params.append('status', filters.status);
+    if (filters.outcomeStatus) params.append('outcomeStatus', filters.outcomeStatus);
+    if (filters.startDate) params.append('startDate', filters.startDate);
+    if (filters.endDate) params.append('endDate', filters.endDate);
+    if (filters.limit) params.append('limit', filters.limit);
+    if (filters.skip) params.append('skip', filters.skip);
+
+    const query = params.toString();
+    return await this.request(`/interventions${query ? '?' + query : ''}`);
+  }
+
+  // Obtener una intervención específica
+  async getIntervention(interventionId) {
+    return await this.request(`/interventions/${interventionId}`);
+  }
+
+  // Crear nueva intervención
+  async createIntervention(data) {
+    return await this.request('/interventions', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  // Actualizar intervención
+  async updateIntervention(interventionId, data) {
+    return await this.request(`/interventions/${interventionId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  // Eliminar intervención
+  async deleteIntervention(interventionId) {
+    return await this.request(`/interventions/${interventionId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // Evaluar resultado de intervención
+  async evaluateIntervention(interventionId, successful, description, impactData = {}) {
+    return await this.request(`/interventions/${interventionId}/evaluate`, {
+      method: 'POST',
+      body: JSON.stringify({ successful, description, impactData }),
+    });
+  }
+
+  // Añadir seguimiento a intervención
+  async addInterventionFollowUp(interventionId, notes, status) {
+    return await this.request(`/interventions/${interventionId}/follow-up`, {
+      method: 'POST',
+      body: JSON.stringify({ notes, status }),
+    });
+  }
+
+  // Completar intervención
+  async completeIntervention(interventionId) {
+    return await this.request(`/interventions/${interventionId}/complete`, {
+      method: 'POST',
+    });
+  }
+
+  // Cancelar intervención
+  async cancelIntervention(interventionId, reason = '') {
+    return await this.request(`/interventions/${interventionId}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    });
+  }
+
+  // Obtener estadísticas de intervenciones
+  async getInterventionsStats(filters = {}) {
+    const params = new URLSearchParams();
+    if (filters.pharmacist) params.append('pharmacist', filters.pharmacist);
+    if (filters.startDate) params.append('startDate', filters.startDate);
+    if (filters.endDate) params.append('endDate', filters.endDate);
+
+    const query = params.toString();
+    return await this.request(`/interventions/stats${query ? '?' + query : ''}`);
+  }
+
+  // Obtener impacto de intervenciones
+  async getInterventionsImpact(filters = {}) {
+    const params = new URLSearchParams();
+    if (filters.pharmacist) params.append('pharmacist', filters.pharmacist);
+    if (filters.startDate) params.append('startDate', filters.startDate);
+    if (filters.endDate) params.append('endDate', filters.endDate);
+
+    const query = params.toString();
+    return await this.request(`/interventions/impact${query ? '?' + query : ''}`);
+  }
+
+  // Obtener intervenciones por tipo
+  async getInterventionsByType(type, options = {}) {
+    const params = new URLSearchParams();
+    if (options.pharmacist) params.append('pharmacist', options.pharmacist);
+    if (options.startDate) params.append('startDate', options.startDate);
+    if (options.endDate) params.append('endDate', options.endDate);
+
+    const query = params.toString();
+    return await this.request(`/interventions/by-type/${type}${query ? '?' + query : ''}`);
+  }
+
+  // Obtener intervenciones de un paciente
+  async getPatientInterventions(patientId, options = {}) {
+    const params = new URLSearchParams();
+    if (options.startDate) params.append('startDate', options.startDate);
+    if (options.endDate) params.append('endDate', options.endDate);
+    if (options.limit) params.append('limit', options.limit);
+
+    const query = params.toString();
+    return await this.request(`/interventions/patient/${patientId}${query ? '?' + query : ''}`);
+  }
+
+  // ===== TIMELINE CLÍNICO UNIFICADO =====
+
+  // Obtener timeline completo de un paciente
+  async getPatientTimeline(patientId, options = {}) {
+    const params = new URLSearchParams();
+    if (options.startDate) params.append('startDate', options.startDate);
+    if (options.endDate) params.append('endDate', options.endDate);
+    if (options.eventTypes) params.append('eventTypes', options.eventTypes);
+    if (options.limit) params.append('limit', options.limit);
+
+    const query = params.toString();
+    return await this.request(`/timeline/patient/${patientId}${query ? '?' + query : ''}`);
+  }
+
+  // Obtener resumen del timeline del paciente
+  async getPatientTimelineSummary(patientId) {
+    return await this.request(`/timeline/patient/${patientId}/summary`);
+  }
+
+  // Comparar timelines de múltiples pacientes
+  async compareTimelines(patientIds, options = {}) {
+    const params = new URLSearchParams();
+    params.append('patientIds', patientIds.join(','));
+    if (options.eventTypes) params.append('eventTypes', options.eventTypes);
+    if (options.startDate) params.append('startDate', options.startDate);
+    if (options.endDate) params.append('endDate', options.endDate);
+
+    const query = params.toString();
+    return await this.request(`/timeline/compare?${query}`);
+  }
+
+  // ===== CONSENTIMIENTOS DINÁMICOS (FASE B) =====
+
+  // Crear consentimiento
+  async createConsent(data) {
+    return await this.request('/consents', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+  }
+
+  // Firmar consentimiento
+  async signConsent(consentId, signatureData) {
+    return await this.request(`/consents/${consentId}/sign`, {
+      method: 'POST',
+      body: JSON.stringify(signatureData)
+    });
+  }
+
+  // Otorgar propósito específico
+  async grantConsentPurpose(consentId, purposeName, additionalData = {}) {
+    return await this.request(`/consents/${consentId}/purposes/${purposeName}/grant`, {
+      method: 'POST',
+      body: JSON.stringify(additionalData)
+    });
+  }
+
+  // Retirar propósito específico
+  async withdrawConsentPurpose(consentId, purposeName, reason = '') {
+    return await this.request(`/consents/${consentId}/purposes/${purposeName}/withdraw`, {
+      method: 'POST',
+      body: JSON.stringify({ reason })
+    });
+  }
+
+  // Autorizar estudio específico
+  async authorizeStudyConsent(consentId, studyId) {
+    return await this.request(`/consents/${consentId}/studies/${studyId}/authorize`, {
+      method: 'POST'
+    });
+  }
+
+  // Retirar autorización de estudio
+  async withdrawStudyConsent(consentId, studyId) {
+    return await this.request(`/consents/${consentId}/studies/${studyId}/withdraw`, {
+      method: 'POST'
+    });
+  }
+
+  // Retirar consentimiento completamente
+  async withdrawConsent(consentId, reason = '') {
+    return await this.request(`/consents/${consentId}/withdraw`, {
+      method: 'POST',
+      body: JSON.stringify({ reason })
+    });
+  }
+
+  // Obtener consentimiento activo de un paciente
+  async getPatientConsent(patientId) {
+    return await this.request(`/consents/patient/${patientId}`);
+  }
+
+  // Obtener todos los consentimientos de un paciente (historial)
+  async getPatientConsentsHistory(patientId) {
+    return await this.request(`/consents/patient/${patientId}/all`);
+  }
+
+  // Obtener consentimiento específico
+  async getConsent(consentId) {
+    return await this.request(`/consents/${consentId}`);
+  }
+
+  // Obtener auditoría de consentimiento
+  async getConsentAudit(consentId) {
+    return await this.request(`/consents/${consentId}/audit`);
+  }
+
+  // Verificar si paciente ha otorgado un propósito
+  async checkConsentPurpose(patientId, purposeName) {
+    return await this.request(`/consents/check/${patientId}/purpose/${purposeName}`);
+  }
+
+  // Verificar si paciente ha autorizado un estudio
+  async checkStudyConsent(patientId, studyId) {
+    return await this.request(`/consents/check/${patientId}/study/${studyId}`);
+  }
+
+  // Solicitar derecho al olvido (GDPR)
+  async requestErasure(consentId, reason = '') {
+    return await this.request(`/consents/${consentId}/gdpr/erasure`, {
+      method: 'POST',
+      body: JSON.stringify({ reason })
+    });
+  }
+
+  // Solicitar acceso a datos (GDPR)
+  async requestDataAccess(consentId) {
+    return await this.request(`/consents/${consentId}/gdpr/access`, {
+      method: 'POST'
+    });
+  }
+
+  // Solicitar portabilidad de datos (GDPR)
+  async requestDataPortability(consentId, format = 'JSON') {
+    return await this.request(`/consents/${consentId}/gdpr/portability`, {
+      method: 'POST',
+      body: JSON.stringify({ format })
+    });
+  }
+
+  // Obtener estadísticas globales de consentimientos
+  async getConsentStats() {
+    return await this.request('/consents/stats/global');
+  }
+
+  // ===== EXPORTACIÓN CIENTÍFICA (FASE B) =====
+
+  // Exportar estudio completo
+  async exportStudy(studyId, options = {}) {
+    const params = new URLSearchParams();
+    if (options.format) params.append('format', options.format); // json, csv, omop, fhir
+    if (options.anonymize !== undefined) params.append('anonymize', options.anonymize);
+    if (options.includeMetadata !== undefined) params.append('includeMetadata', options.includeMetadata);
+    if (options.strobeChecklist !== undefined) params.append('strobeChecklist', options.strobeChecklist);
+
+    const query = params.toString();
+    return await this.request(`/export/study/${studyId}${query ? '?' + query : ''}`);
+  }
+
+  // Descargar estudio exportado (para CSV)
+  async downloadStudyExport(studyId, format = 'csv') {
+    const token = this.getToken();
+    const url = `${this.baseURL}/export/study/${studyId}?format=${format}&anonymize=true`;
+
+    // Descargar archivo
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `study_${studyId}_${format}_${Date.now()}.${format}`;
+    link.click();
+  }
 }
 
 // Crear instancia global
