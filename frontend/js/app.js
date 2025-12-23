@@ -264,6 +264,9 @@ class FarmaFollowApp {
       case 'admin-dashboard':
         this.renderAdminDashboard(app);
         break;
+      case 'chat':
+        this.renderChat(app);
+        break;
       default:
         this.renderLogin(app);
     }
@@ -274,6 +277,7 @@ class FarmaFollowApp {
         this.currentScreen === 'reminders' ||
         this.currentScreen === 'consult' ||
         this.currentScreen === 'faq' ||
+        this.currentScreen === 'chat' ||
         this.currentScreen === 'my-consultations') {
       this.showScreen('dashboard');
     } else {
@@ -282,6 +286,11 @@ class FarmaFollowApp {
   }
 
   logout() {
+    // Desconectar Socket.io si está conectado
+    if (ChatModule.socket && ChatModule.socket.connected) {
+      ChatModule.disconnect();
+    }
+
     // Clear user data and token
     this.user = null;
     localStorage.removeItem('token');
@@ -452,6 +461,21 @@ class FarmaFollowApp {
 
         <div class="section-title">💊 Tu Medicamento</div>
         <div class="medications-list" id="medicationsContainer"></div>
+
+        <div class="section-title" style="margin-top: 2rem;">⚡ Acciones Rápidas</div>
+        <div class="options-grid">
+          <div class="option-card" onclick="app.showScreen('chat')">
+            <div class="option-icon">💬</div>
+            <div class="option-title">Chat</div>
+            <div class="option-description">Mensajes con tu equipo</div>
+          </div>
+
+          <div class="option-card" onclick="app.showScreen('my-consultations')">
+            <div class="option-icon">📋</div>
+            <div class="option-title">Consultas</div>
+            <div class="option-description">Historial de consultas</div>
+          </div>
+        </div>
       `;
 
       const medicationsContainer = document.getElementById('medicationsContainer');
@@ -6083,6 +6107,25 @@ class FarmaFollowApp {
     } catch (error) {
       console.error('Error exporting GDPR report:', error);
       alert('Error al exportar reporte GDPR');
+    }
+  }
+
+  // ===== CHAT MODULE =====
+
+  async renderChat(container) {
+    try {
+      // Inicializar Socket.io si no está inicializado
+      if (!ChatModule.socket || !ChatModule.socket.connected) {
+        ChatModule.currentUser = this.user;
+        ChatModule.init();
+      }
+
+      // Renderizar la UI del chat
+      const chatHTML = await ChatModule.renderChatList();
+      container.innerHTML = chatHTML;
+    } catch (error) {
+      console.error('Error renderizando chat:', error);
+      container.innerHTML = '<p class="error">Error cargando el chat</p>';
     }
   }
 }
