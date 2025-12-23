@@ -3,8 +3,11 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const path = require('path');
+const http = require('http');
+const { Server } = require('socket.io');
 
 const app = express();
+const server = http.createServer(app);
 
 // Middleware
 app.use(cors());
@@ -18,6 +21,20 @@ if (process.env.NODE_ENV !== 'production') {
     next();
   });
 }
+
+// Configurar Socket.io con CORS
+const io = new Server(server, {
+  cors: {
+    origin: process.env.NODE_ENV === 'production'
+      ? process.env.FRONTEND_URL || '*'
+      : '*',
+    methods: ['GET', 'POST']
+  }
+});
+
+// Configurar eventos de Socket.io
+const { setupChatSocket } = require('./sockets/chatSocket');
+setupChatSocket(io);
 
 // Conectar a MongoDB
 mongoose.connect(process.env.MONGODB_URI)
@@ -42,6 +59,9 @@ app.use('/api/questionnaires', require('./routes/questionnaires'));
 
 // Rutas de historial clínico
 app.use('/api/clinical-history', require('./routes/clinicalHistory'));
+
+// Rutas de chat (nuevas)
+app.use('/api/chats', require('./routes/chats'));
 
 // ===== NUEVAS RUTAS - FASE A: Constructor de Estudios RWE =====
 
@@ -107,9 +127,13 @@ app.use((err, req, res, next) => {
   });
 });
 
+// Hacer io accesible en las rutas (para poder emitir eventos desde REST API si es necesario)
+app.set('io', io);
+
 // Iniciar servidor
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
   console.log(`📊 Entorno: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`💬 Socket.io configurado y listo`);
 });
